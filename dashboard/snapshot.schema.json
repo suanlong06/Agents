@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/dashboard-snapshot.schema.json",
+  "title": "Dashboard snapshot v1",
+  "description": "Snapshot di động do dashboard/data_adapter.py xuất từ state_dir (CHỈ ĐỌC) và chuyển sang Muse VM (PR-5, SPEC mục 6). Muse Artifact không đọc được state_dir cục bộ; làm mới = snapshot mới. Mỗi view có provenance: file nguồn, số bản ghi, as_of = thời điểm fold cuối (không bao giờ là giờ hiện tại hay 'now'). records = null nghĩa là KHÔNG CÓ DỮ LIỆU, khác 0. source = 'fixture' thì trang dựng ra phải có watermark FAKE. Best-effort, không chống giả mạo (R15).",
+  "type": "object",
+  "required": ["kind", "v", "source", "source_reasons", "exported_at", "state_dir", "github_repo", "fold", "killswitch", "views"],
+  "properties": {
+    "kind": {"const": "harness-dashboard-snapshot"},
+    "v": {"type": "integer", "minimum": 1},
+    "source": {"enum": ["runtime", "fixture"]},
+    "source_reasons": {"type": "array", "items": {"type": "string"}},
+    "exported_at": {"type": "string", "minLength": 1, "description": "Lúc xuất snapshot. KHÔNG phải as_of."},
+    "state_dir": {"type": "string"},
+    "github_repo": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "fold": {
+      "type": "object",
+      "required": ["as_of", "as_of_error", "fold_count", "state_file"],
+      "properties": {
+        "as_of": {"$ref": "#/$defs/as_of"},
+        "as_of_error": {"type": ["string", "null"]},
+        "fold_count": {"type": ["integer", "null"], "minimum": 0},
+        "state_file": {"$ref": "#/$defs/source"}
+      }
+    },
+    "killswitch": {
+      "type": "object",
+      "description": "Chỉ để xem. Fail-closed: thiếu file hay đọc lỗi thì engaged = true.",
+      "required": ["view_only", "state", "engaged", "reason", "file", "present"],
+      "properties": {
+        "view_only": {"const": true},
+        "state": {"enum": ["on", "off"]},
+        "engaged": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "set_by": {"type": ["string", "null"]},
+        "set_at": {"type": ["string", "null"]},
+        "note": {"type": ["string", "null"]},
+        "file": {"type": ["string", "null"]},
+        "present": {"type": "boolean"}
+      }
+    },
+    "views": {
+      "type": "object",
+      "required": ["kanban", "pr_queue", "approvals", "agents", "logs", "costs"],
+      "additionalProperties": false,
+      "properties": {
+        "kanban": {
+          "allOf": [{"$ref": "#/$defs/view"}],
+          "required": ["columns"],
+          "properties": {
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["state", "group", "step", "count", "tasks"],
+                "properties": {
+                  "state": {"type": "string"},
+                  "group": {"enum": ["step", "extended", "unknown"]},
+                  "step": {"type": ["integer", "null"], "minimum": 1, "maximum": 13},
+                  "count": {"type": ["integer", "null"], "minimum": 0},
+                  "tasks": {"type": "array", "items": {"type": "object", "required": ["task_id", "state"]}}
+                }
+              }
+            }
+          }
+        },
+        "pr_queue": {
+          "allOf": [{"$ref": "#/$defs/view"}],
+          "required": ["items"],
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["task_id", "attempt", "pr", "head_sha", "state", "current", "label", "ci", "url", "checks_url"],
+                "properties": {
+                  "pr": {"type": "integer", "minimum": 1},
+                  "label": {
+                    "oneOf": [
+                      {"type": "null"},
+                      {"type": "object", "required": ["tier", "sha", "valid", "basis"],
+                       "properties": {"tier": {"enum": ["red", "owner-only", "green"]}, "valid": {"type": "boolean"}}}
+                    ]
+                  },
+                  "ci": {
+                    "oneOf": [
+                      {"type": "null"},
+                      {"type": "object", "required": ["state", "basis"], "properties": {"state": {"enum": ["failure"]}}}
+                    ]
+                  },
+                  "url": {"$ref": "#/$defs/github_url"},
+                  "checks_url": {"$ref": "#/$defs/github_url"}
+                }
+              }
+            }
+          }
+        },
+        "approvals": {
+          "allOf": [{"$ref": "#/$defs/view"}],
+          "required": ["items"],
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["kind", "task_id", "state", "pr", "head_sha", "reason", "url", "latest_review"],
+                "properties": {
+                  "kind": {"enum": ["spec", "pr", "escalated", "awaiting-human"]},
+                  "url": {"$ref": "#/$defs/github_url"},
+                  "latest_review": {
+                    "oneOf": [
+                      {"type": "null"},
+                      {"type": "object", "required": ["state", "reviewer", "commit_id", "matches_head", "html_url"],
+                       "properties": {"html_url": {"$ref": "#/$defs/github_url"}}}
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agents": {
+          "allOf": [{"$ref": "#/$defs/view"}],
+          "required": ["orchestrator", "timeout_s", "published_at", "agents"],
+          "properties": {
+            "agents": {"type": "array", "items": {"type": "object", "required": ["agent", "status"]}}
+          }
+        },
+        "logs": {
+          "allOf": [{"$ref": "#/$defs/view"}],
+          "required": ["audit", "agents", "quarantine"],
+          "properties": {
+            "audit": {
+              "type": "object",
+              "required": ["count", "tail"],
+              "properties": {"count": {"type": ["integer", "null"], "minimum": 0}, "tail": {"type": "array"}}
+            },
+            "agents": {"type": "object"}
+          }
+        },
+        "costs": {
+          "allOf": [{"$ref": "#/$defs/view"}],
+          "required": ["tasks", "totals", "duplicates"],
+          "properties": {
+            "tasks": {"type": "array", "items": {"$ref": "#/$defs/totals"}},
+            "totals": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/totals"}]}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "as_of": {
+      "description": "Thời điểm fold cuối cùng (ISO 8601 có múi giờ) hoặc null khi chưa có lần fold nào. Không bao giờ là 'now'.",
+      "type": ["string", "null"],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?([+-]\\d{2}:\\d{2}|Z)$"
+    },
+    "github_url": {"type": ["string", "null"], "pattern": "^https://github\\.com/"},
+    "source": {
+      "type": "object",
+      "required": ["file", "present", "records", "skipped", "error"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "present": {"type": "boolean"},
+        "records": {"type": ["integer", "null"], "minimum": 0},
+        "skipped": {"type": "integer", "minimum": 0},
+        "error": {"type": ["string", "null"]}
+      },
+      "if": {"properties": {"present": {"const": false}}},
+      "then": {"properties": {"records": {"type": "null"}}}
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["sources", "records", "as_of", "status"],
+      "properties": {
+        "sources": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/source"}},
+        "records": {"type": ["integer", "null"], "minimum": 0},
+        "as_of": {"$ref": "#/$defs/as_of"},
+        "status": {"enum": ["ok", "partial", "no-data", "error"]}
+      },
+      "if": {"properties": {"status": {"const": "no-data"}}},
+      "then": {"properties": {"records": {"type": "null"}}}
+    },
+    "view": {
+      "type": "object",
+      "required": ["provenance"],
+      "properties": {"provenance": {"$ref": "#/$defs/provenance"}}
+    },
+    "totals": {
+      "type": "object",
+      "required": ["records", "input_tokens", "output_tokens", "cost_usd", "unpriced_calls", "estimated_calls"],
+      "properties": {
+        "records": {"type": "integer", "minimum": 0},
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "cost_usd": {"type": "number", "minimum": 0},
+        "unpriced_calls": {"type": "integer", "minimum": 0},
+        "estimated_calls": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

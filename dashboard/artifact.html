@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<!--
+  Harness Agents — dashboard Muse Artifact MVP (PR-5, SPEC mục 6). CHỈ ĐỌC.
+
+  Đây là TEMPLATE tĩnh. `python -m dashboard.data_adapter render` thay phần giữa
+  HARNESS:BODY bằng 6 view dựng từ một snapshot và nhúng snapshot đó (JSON, chỉ là dữ liệu)
+  vào thẻ #harness-snapshot. Trang KHÔNG có JavaScript, form, nút hay endpoint: không duyệt,
+  không bật/tắt kill-switch, không cờ auto-merge, không gọi mạng. Duyệt diễn ra trên GitHub.
+
+  Muse Artifact được host trên Muse VM và không đọc được state_dir của máy chạy harness:
+  trang chỉ hiển thị snapshot đã được chuyển sang VM. Làm mới = dựng lại từ snapshot mới
+  (dashboard/views/00_snapshot_handoff.md).
+
+  Watermark FAKE do data_adapter sinh ra từ trường dữ liệu `source` của snapshot; CSS dưới
+  đây chỉ định kiểu cho phần tử đó, không tự sinh chữ.
+-->
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; form-action 'none'; connect-src 'none'; script-src 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Harness Agents — dashboard (chỉ đọc)</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1d232b; --muted: #66707c; --line: #dde1e6;
+    --red: #b42318; --red-bg: #fde8e7; --amber: #8a5a00; --amber-bg: #fff4d6;
+    --green: #146c2e; --green-bg: #e3f4e8; --violet: #5b3cc4; --violet-bg: #ece7fd;
+    --blue: #1d5fbf; --blue-bg: #e5eefb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  header.page-head, main, footer { max-width: 1400px; margin: 0 auto; padding: 16px 20px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h2 { font-size: 16px; margin: 0; }
+  h3 { font-size: 13px; margin: 12px 0 6px; }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .mono { max-width: 520px; overflow-wrap: anywhere; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--ink); }
+  .muted { color: var(--muted); }
+  .warn { color: var(--amber); }
+  .bad { color: var(--red); }
+  .note, .trust { color: var(--muted); margin: 6px 0; }
+  .nodata { color: var(--violet); background: var(--violet-bg); border-radius: 3px; padding: 0 4px; font-style: italic; }
+  .nodata-block { padding: 12px; border: 1px dashed var(--violet); border-radius: 6px; background: var(--violet-bg); }
+  .empty { color: var(--muted); }
+
+  .watermark {
+    position: sticky; top: 0; z-index: 10; text-align: center; font-weight: 700; letter-spacing: .08em;
+    color: #fff; background: repeating-linear-gradient(45deg, #b42318 0 14px, #8f1c13 14px 28px); padding: 8px;
+  }
+  .fake-tag { margin-left: 10px; padding: 1px 8px; border-radius: 3px; background: var(--red); color: #fff; font-weight: 700; font-size: 12px; }
+
+  .killswitch { margin: 10px 0; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--line); }
+  .ks-on { background: var(--red-bg); border-color: var(--red); }
+  .ks-off { background: var(--green-bg); border-color: var(--green); }
+
+  section.view { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 0 0 16px; }
+  .view-head { display: flex; align-items: center; }
+  .provenance { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 10px; padding: 6px 10px; font-size: 12px;
+    background: var(--blue-bg); border-radius: 6px; color: var(--ink); }
+  .status { font-weight: 600; }
+  .status-ok { color: var(--green); }
+  .status-partial { color: var(--amber); }
+  .status-no-data { color: var(--violet); }
+  .status-error { color: var(--red); }
+
+  .kanban { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+  .column { flex: 0 0 210px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+  .column h3 { margin: 2px 2px 8px; display: flex; gap: 6px; align-items: baseline; }
+  .column h3 small { color: var(--muted); font-weight: 400; }
+  .column .count { margin-left: auto; }
+  .col-extended { background: var(--amber-bg); }
+  .col-unknown { background: var(--red-bg); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; margin-bottom: 6px; }
+  .card-id { font-weight: 600; }
+  .card-meta { font-size: 12px; }
+
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; vertical-align: top; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  th { background: var(--bg); font-weight: 600; }
+  tr.past td { color: var(--muted); }
+  tr.total td { font-weight: 700; border-top: 2px solid var(--ink); }
+  tr.res-error td, tr.res-rejected td { background: var(--red-bg); }
+
+  .label { padding: 1px 7px; border-radius: 3px; font-weight: 600; font-size: 12px; }
+  .label-red { background: var(--red-bg); color: var(--red); }
+  .label-owner-only { background: var(--violet-bg); color: var(--violet); }
+  .label-green { background: var(--green-bg); color: var(--green); }
+  .ci-failure, .hb-error, .hb-invalid { color: var(--red); font-weight: 600; }
+  .hb-ok { color: var(--green); font-weight: 600; }
+  .hb-stale, .hb-stopped { color: var(--amber); font-weight: 600; }
+  details { margin: 4px 0; }
+  summary { cursor: pointer; }
+  footer { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<!--HARNESS:BODY-->
+<header class="page-head">
+  <h1>Harness Agents — dashboard (chỉ đọc)</h1>
+  <p class="nodata-block"><span class="nodata">không có dữ liệu</span>: chưa nạp snapshot. Trang này là template;
+  dựng bằng <code>python -m dashboard.data_adapter render --state-dir &lt;state_dir&gt; --out &lt;file.html&gt;</code>
+  trên máy chạy harness rồi chuyển file sang Muse VM.</p>
+</header>
+<!--/HARNESS:BODY-->
+<script type="application/json" id="harness-snapshot">null</script>
+</body>
+</html>
