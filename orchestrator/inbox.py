@@ -91,7 +91,8 @@ class AgentInbox:
                         if obj is not None and isinstance(obj.get("seq"), int)), default=0)
 
     def event(self, type_: str, task_id: str, payload: dict | None = None, *, sha: str | None = None,
-              model_id: object = _UNSET, model_id_source: str | None = None) -> dict:
+              model_id: object = _UNSET, model_id_source: str | None = None,
+              vendor: object = _UNSET) -> dict:
         ev = {
             "v": EVENT_VERSION,
             "agent": self.agent,
@@ -103,7 +104,8 @@ class AgentInbox:
             "type": type_,
             "model_id": self.model_id if model_id is _UNSET else model_id,
             "model_id_source": model_id_source or self.model_id_source,
-            "vendor": self.vendor,
+            # PR-2: adapter ghi vendor của model THỰC SỰ phục vụ cho từng lời gọi.
+            "vendor": self.vendor if vendor is _UNSET else vendor,
             "payload": dict(payload or {}),
         }
         if sha is not None:
