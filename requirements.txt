@@ -1,0 +1,5 @@
+PyYAML>=6.0
+jsonschema>=4.18
+referencing>=0.30
+# zoneinfo trên Windows cần tzdata cho Asia/Seoul (R17).
+tzdata

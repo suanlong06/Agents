@@ -1,0 +1,30 @@
+{
+ "schema_version": 1,
+ "kind": "harness-state",
+ "source": "fixture",
+ "as_of": "2026-10-25T10:00:00.000+09:00",
+ "fold_count": 3,
+ "offsets": {"inbox/implementer.jsonl": 512},
+ "watermarks": {"implementer|4242|2026-10-25T09:00:00.000+09:00": 4},
+ "tasks": {
+  "T-1": {
+   "task_id": "T-1",
+   "kind": "feature",
+   "title": "fixture task",
+   "state": "pr_opened",
+   "attempt": 2,
+   "pr": 11,
+   "parent_pr": 10,
+   "head_sha": "abcdef1",
+   "fix_rounds": 1,
+   "resume_state": null,
+   "escalation_reason": null,
+   "attempts": [
+    {"attempt": 1, "pr": 10, "parent_pr": null, "head_sha": "1234567", "final_state": "superseded"}
+   ],
+   "created_at": "2026-10-25T09:00:00.000+09:00",
+   "updated_at": "2026-10-25T10:00:00.000+09:00"
+  }
+ },
+ "quarantine": []
+}

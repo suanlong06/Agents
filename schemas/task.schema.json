@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/task.schema.json",
+  "title": "Task record v1",
+  "description": "Một task trong state snapshot. Lineage task_id/parent_pr/attempt; fix_rounds cộng dồn theo task_id, không reset khi mở PR mới (R2). Trường `state` chỉ kiểm cấu trúc ở đây; tập trạng thái hợp lệ do orchestrator/state.py quyết định (liệt kê ở $defs/known_states) để code bản trước vẫn đọc được state bản sau.",
+  "type": "object",
+  "required": ["task_id", "kind", "state", "attempt", "pr", "parent_pr", "head_sha", "fix_rounds", "resume_state", "escalation_reason", "attempts", "created_at", "updated_at"],
+  "properties": {
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "kind": {"enum": ["feature", "bugfix"]},
+    "title": {"type": "string"},
+    "state": {"type": "string", "minLength": 1},
+    "attempt": {"type": "integer", "minimum": 1},
+    "pr": {"type": ["integer", "null"], "minimum": 1},
+    "parent_pr": {"type": ["integer", "null"], "minimum": 1},
+    "head_sha": {"type": ["string", "null"]},
+    "fix_rounds": {"type": "integer", "minimum": 0},
+    "resume_state": {"type": ["string", "null"]},
+    "escalation_reason": {"type": ["string", "null"]},
+    "attempts": {
+      "type": "array",
+      "description": "Các attempt trước, mỗi attempt gắn một PR; attempt cũ kết thúc ở `superseded`.",
+      "items": {
+        "type": "object",
+        "required": ["attempt", "pr", "parent_pr", "final_state"],
+        "properties": {
+          "attempt": {"type": "integer", "minimum": 1},
+          "pr": {"type": ["integer", "null"], "minimum": 1},
+          "parent_pr": {"type": ["integer", "null"], "minimum": 1},
+          "head_sha": {"type": ["string", "null"]},
+          "final_state": {"type": "string"}
+        }
+      }
+    },
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"}
+  },
+  "$defs": {
+    "known_states": {
+      "description": "Bước 1–13 (SPEC mục 3) + trạng thái mở rộng (SPEC R2, khai báo là phần mở rộng so với SPEC gốc).",
+      "enum": [
+        "intake", "spec_draft", "spec_review", "pr_opened", "labelled", "ci_check", "gate3_review",
+        "fix_list", "approved_merge", "batch_release", "readonly_check", "revert_incident", "maintenance",
+        "escalated", "blocked", "superseded", "cancelled", "awaiting-human"
+      ]
+    }
+  }
+}

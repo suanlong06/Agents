@@ -1,0 +1,19 @@
+# Bảng giá CHỈ DÙNG CHO TEST (số tròn để dễ kiểm). Không phải giá thật.
+schema_version: 1
+version: "test-fixture"
+verified: true
+currency: USD
+unit: per_1m_tokens
+models:
+  claude-opus-5-5:
+    vendor: anthropic
+    input: 10.0
+    output: 50.0
+  deepseek-v4.1-flash-1017:
+    vendor: deepseek
+    input: 1.0
+    output: 2.0
+  gemini-3.8-flash-medium:
+    vendor: google
+    input: 0.5
+    output: 1.0

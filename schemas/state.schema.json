@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/state.schema.json",
+  "title": "State snapshot v1",
+  "description": "Snapshot nguyên tử duy nhất do orchestrator ghi (R3), nằm ngoài repo (R13). Offset đã fold và watermark event nằm CÙNG snapshot với tasks. Tương thích N-1: trường lạ được giữ nguyên.",
+  "type": "object",
+  "required": ["schema_version", "kind", "as_of", "fold_count", "offsets", "watermarks", "tasks", "quarantine"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "kind": {"const": "harness-state"},
+    "source": {"enum": ["runtime", "fixture"], "description": "`fixture` thì dashboard phải gắn watermark FAKE."},
+    "as_of": {"type": ["string", "null"], "description": "Thời điểm fold cuối cùng (KST), không phải giờ hiện tại."},
+    "fold_count": {"type": "integer", "minimum": 0},
+    "offsets": {
+      "type": "object",
+      "description": "Byte offset đã fold của từng nguồn event, chỉ tiến khi snapshot ghi thành công.",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "watermarks": {
+      "type": "object",
+      "description": "seq lớn nhất đã áp theo `agent|pid|proc_start`; event có seq <= watermark không gây thêm hiệu ứng.",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {"$ref": "https://harness.local/schemas/task.schema.json"}
+    },
+    "quarantine": {
+      "type": "array",
+      "description": "Dòng event hỏng bị cách ly để fold không bị kẹt.",
+      "items": {
+        "type": "object",
+        "required": ["source", "offset", "error", "raw"],
+        "properties": {
+          "source": {"type": "string"},
+          "offset": {"type": "integer", "minimum": 0},
+          "error": {"type": "string"},
+          "raw": {"type": "string"},
+          "ts": {"type": "string"}
+        }
+      }
+    }
+  }
+}

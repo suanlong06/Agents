@@ -1,0 +1,30 @@
+# Bảng giá cho cost ledger (R5).
+# ⚠️ GIÁ TẠM, CHƯA XÁC MINH (verified: false). Người dùng phải cập nhật giá thật
+# trước khi dùng số liệu chi phí để ra quyết định. Ledger ghi kèm `prices_version`.
+schema_version: 1
+version: "2026-10-25-unverified"
+verified: false
+currency: USD
+unit: per_1m_tokens
+
+models:
+  claude-opus-5-5:
+    vendor: anthropic
+    input: 15.0
+    output: 75.0
+  claude-sonnet-5-5:
+    vendor: anthropic
+    input: 3.0
+    output: 15.0
+  deepseek-v4.1-flash-1017:
+    vendor: deepseek
+    input: 0.3
+    output: 1.2
+  gemini-3.8-flash-medium:
+    vendor: google
+    input: 0.3
+    output: 2.5
+  gemini-4-argon-medium:
+    vendor: google
+    input: 1.25
+    output: 10.0
