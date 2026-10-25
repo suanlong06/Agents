@@ -1,0 +1,23 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  ci:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install PyYAML jsonschema referencing tzdata pytest
+      - name: Run tests
+        shell: pwsh
+        run: |
+          if (Test-Path tests) {
+            python -m pytest -q
+          } else {
+            Write-Host "No test suite yet (PR-0 stage); nothing to run."
+          }
