@@ -258,6 +258,10 @@ Quy tắc cho dashboard trong MVP:
 
 ## 8. OPEN DISCUSSION FOR PR
 
+> 📌 **Quyết định SPLIT (người dùng đã duyệt, 2026-10-25):**
+> 1. **Mục 9 được DUYỆT** với vai trò checklist chỉ để tham khảo: đo sau MVP, rồi giữ hoặc thay theo quy tắc 9.5. Mục 9 **không ràng buộc code**.
+> 2. **4 điều kiện auto-merge KHÔNG được duyệt** là nội dung cuối. Vẫn là **OPEN DISCUSSION**, hoãn đến trước khi PR-4a bật auto-merge, và sẽ quyết định dựa trên dữ liệu shadow evaluator của PR-4a. Danh sách 4 ứng viên hiện tại ở mục 8 chỉ là **bản nháp thảo luận**, không phải quyết định đã duyệt. Trong MVP auto-merge vẫn **TẮT**.
+
 > ⚠️ **4 điều kiện auto-merge cho PR Green CHƯA được chốt.** Phần này dùng để thảo luận trong PR, chưa phải quyết định cuối. Trong MVP auto-merge tắt; PR-4a chỉ chạy shadow evaluator.
 
 **Ứng viên điều kiện:**

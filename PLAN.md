@@ -172,4 +172,8 @@ Ngoài MVP: tách OS user → PR-4b → PR-4c.
 
 ## Câu hỏi mở
 
+> 📌 **Quyết định SPLIT (người dùng đã duyệt, 2026-10-25):**
+> 1. **Mục 9 được DUYỆT** với vai trò checklist chỉ để tham khảo: đo sau MVP, rồi giữ hoặc thay theo quy tắc 9.5. Mục 9 **không ràng buộc code**.
+> 2. **4 điều kiện auto-merge KHÔNG được duyệt** là nội dung cuối. Vẫn là **OPEN DISCUSSION**, hoãn đến trước khi PR-4a bật auto-merge, và sẽ quyết định dựa trên dữ liệu shadow evaluator của PR-4a. Danh sách 4 ứng viên hiện tại ở mục 8 chỉ là **bản nháp thảo luận**, không phải quyết định đã duyệt. Trong MVP auto-merge vẫn **TẮT**.
+
 Xem SPEC mục 8: 4 điều kiện auto-merge (**OPEN DISCUSSION**), 15 câu hỏi từ D§9 kèm mặc định đề xuất, và bảng mặc định tạm trong config. Các mục còn mở từ DEBATE mà PLAN chưa giải: lớp revert được ủy quyền trước khi người dùng vắng (D§2.8 #8.3), process lạ trên `:20128` (D§2.7 #7.4), tiêu chí đo việc nạp lại log (D§2.12 #12.4).
