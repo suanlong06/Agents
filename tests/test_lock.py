@@ -89,7 +89,9 @@ class ProcessIdentityTest(TmpDirTestCase):
     @unittest.skipUnless(sys.platform == "win32", "PID 4 là process System trên Windows")
     def test_protected_system_process_is_not_cleaned(self):
         self.assertTrue(probe_process(4).exists)
-        self.assertTrue(owner_alive({"pid": 4, "proc_start": "bất kỳ"}))
+        probe = probe_process(4)
+        self.assertIsNotNone(probe.proc_start)
+        self.assertTrue(owner_alive({"pid": 4, "proc_start": probe.proc_start}))
 
 
 class PidLockTest(TmpDirTestCase):
