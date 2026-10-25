@@ -1,0 +1,44 @@
+# Nhãn Red / Owner-only / Green (PR-3, R8).
+#
+# - pipeline/labeler.py đọc file này TỪ BASE REF (blob tại SHA của base), KHÔNG BAO GIỜ
+#   từ PR head hay working tree. PR sửa file này ở head không đổi được nhãn của chính nó.
+# - So khớp sau khi chuẩn hóa: NFC, casefold, `\` -> `/`, bỏ dấu chấm/khoảng trắng cuối
+#   mỗi đoạn (Windows coi `conftest.py.` là `conftest.py`).
+# - Mẫu: `**` = mọi số đoạn (kể cả 0), `*` và `?` không vượt qua `/`. Mẫu không có `/`
+#   so với TÊN FILE ở mọi độ sâu.
+# - Thứ tự tầng: owner-only > red > green. File không khớp allowlist Green thì mặc định
+#   Red. Nhãn của PR là tầng cao nhất trong mọi file (tên cũ và tên mới khi đổi tên, file
+#   bị xóa).
+# - Luôn Red bất kể file này (cứng trong code, file này không gỡ được): symlink,
+#   submodule, `.gitattributes`, `conftest.py`, `.pth`, `sitecustomize`,
+#   `pyproject.toml`, xóa test. `always_red` dưới đây chỉ THÊM vào danh sách đó.
+# - Danh sách Owner-only là danh sách khởi đầu đề xuất ở SPEC R8 (chờ người dùng duyệt,
+#   SPEC mục 8 câu 9). Allowlist Green cố ý hẹp (SPEC mục 8 câu 12): `docs/**` + test
+#   THÊM MỚI. Chỉnh theo dữ liệu thật (R16).
+schema_version: 1
+
+owner_only:
+  - "config/**"
+  - "pipeline/labeler.py"
+  - "pipeline/gate3.py"
+  - ".github/**"
+  - "orchestrator/audit.py"
+  - "orchestrator/ledger.py"
+  - "release/**"
+  - "schemas/**"
+  - "CODEOWNERS"
+
+always_red:
+  - ".gitmodules"
+  - "usercustomize*"
+  - "setup.py"
+  - "setup.cfg"
+  - "pytest.ini"
+  - "tox.ini"
+  - "requirements*.txt"
+
+# Mỗi mục: mẫu + các trạng thái git được phép (A thêm, M sửa, D xóa, R đổi tên).
+# Đổi tên chỉ Green khi CẢ tên cũ và tên mới khớp một mục cho phép R.
+green:
+  - {pattern: "docs/**", status: [A, M, D, R]}
+  - {pattern: "tests/**/test_*.py", status: [A]}
