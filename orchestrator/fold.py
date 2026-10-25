@@ -46,6 +46,9 @@ class FoldResult:
     rejected: int = 0
     quarantined: int = 0
     pending_partial: list[str] = field(default_factory=list)
+    # Nguồn không đọc được từ offset đã lưu (ví dụ file bị cắt ngắn): bị bỏ qua ở
+    # lần fold này, offset giữ nguyên, health = error.
+    source_errors: dict[str, str] = field(default_factory=dict)
 
 
 def event_source_key(ev: dict) -> str:
@@ -113,7 +116,14 @@ class Orchestrator:
         for src in sources:
             name = self._source_name(src)
             offset = working["offsets"].get(name, 0)
-            lines, new_offset = iter_complete_lines(Path(src), offset)
+            try:
+                lines, new_offset = iter_complete_lines(Path(src), offset)
+            except ValueError as exc:
+                # File ngắn hơn offset đã lưu (bị cắt hoặc thay thế). Không crash-loop
+                # với health ok: bỏ qua nguồn này, giữ offset, báo lỗi lên health.
+                result.source_errors[name] = str(exc)
+                self._report_source_error(name, offset, exc)
+                continue
             if Path(src).exists() and Path(src).stat().st_size > new_offset:
                 result.pending_partial.append(name)
             for line_off, raw in lines:
@@ -136,8 +146,24 @@ class Orchestrator:
             self._report_write_failure(exc)
             raise
         self.snapshot = working
-        self.health = {"status": "ok", "last_error": None}
+        if result.source_errors:
+            name, err = next(iter(result.source_errors.items()))
+            self.health = {"status": "error", "last_error": f"nguồn {name}: {err}"}
+        else:
+            self.health = {"status": "ok", "last_error": None}
         return result
+
+    def _report_source_error(self, name: str, offset: int, exc: BaseException) -> None:
+        # dedup_key theo (nguồn, offset): fold lặp lại không ghi thêm bản ghi audit.
+        try:
+            self.audit.append(
+                action="fold.source", result="error", agent=ORCHESTRATOR_AGENT,
+                served_model=None, vendor=None, model_id_source=None, sha=None,
+                task_id=None, attempt=None, detail={"source": name, "offset": offset, "error": str(exc)},
+                dedup_key=f"source_error:{name}:{offset}",
+            )
+        except OSError:
+            pass
 
     def _report_write_failure(self, exc: BaseException) -> None:
         # Không bao giờ im lặng: health = error, ghi audit, gọi hook heartbeat.

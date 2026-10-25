@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/heartbeat.schema.json",
+  "title": "Harness heartbeat v1",
+  "description": "Hai loại bản ghi. `harness-heartbeat`: do MỘT process agent ghi nguyên tử vào inbox của chính nó (inbox/<agent>/heartbeat-<pid>-<token>.json, R3). `harness-heartbeats`: bản tổng hợp do orchestrator ghi (heartbeats.json trong state_dir), gồm health của orchestrator và trạng thái từng agent; quá `timeout_s` thì `stale`. timeout_s là mặc định tạm trong config (R16). Best-effort, không chống giả mạo (R15). Trường lạ được bỏ qua để tương thích N-1/N+1.",
+  "type": "object",
+  "required": ["v", "kind"],
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "kind": {"enum": ["harness-heartbeat", "harness-heartbeats"]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "harness-heartbeat"}}},
+      "then": {"$ref": "#/$defs/agent_beat"}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "harness-heartbeats"}}},
+      "then": {"$ref": "#/$defs/summary"}
+    }
+  ],
+  "$defs": {
+    "agent_beat": {
+      "type": "object",
+      "required": ["v", "kind", "agent", "pid", "proc_start", "beat", "ts", "status"],
+      "properties": {
+        "agent": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+        "pid": {"type": "integer", "minimum": 0},
+        "proc_start": {"type": "string", "minLength": 1, "maxLength": 64},
+        "model_id": {"type": ["string", "null"]},
+        "task_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+        "attempt": {"type": ["integer", "null"], "minimum": 1},
+        "beat": {"type": "integer", "minimum": 1, "description": "Tăng dần trong một process."},
+        "ts": {"type": "string", "minLength": 1, "description": "Thời điểm ghi (ISO 8601 có múi giờ)."},
+        "status": {"enum": ["ok", "error", "stopped"]},
+        "last_error": {"type": ["string", "null"]}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["v", "kind", "as_of", "timeout_s", "orchestrator", "agents"],
+      "properties": {
+        "as_of": {"type": "string", "minLength": 1},
+        "timeout_s": {"type": "number", "exclusiveMinimum": 0},
+        "orchestrator": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": {"enum": ["ok", "error"]},
+            "last_error": {"type": ["string", "null"]}
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["agent", "source", "status"],
+            "properties": {
+              "agent": {"type": "string"},
+              "source": {"type": "string"},
+              "status": {"enum": ["ok", "error", "stopped", "stale", "invalid"]},
+              "reason": {"type": ["string", "null"]},
+              "pid": {"type": ["integer", "null"]},
+              "proc_start": {"type": ["string", "null"]},
+              "task_id": {"type": ["string", "null"]},
+              "attempt": {"type": ["integer", "null"]},
+              "model_id": {"type": ["string", "null"]},
+              "ts": {"type": ["string", "null"]},
+              "age_s": {"type": ["number", "null"]},
+              "last_error": {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    }
+  }
+}
