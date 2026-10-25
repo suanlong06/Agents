@@ -24,3 +24,15 @@ atomic_write:
 quarantine_max_raw_bytes: 4096
 
 prices_path: config/prices.yaml
+
+# --- PR-1b ---
+# Worktree theo task-attempt, tên <task>-<attempt> (R6). Root ngắn, ngoài repo, để
+# tránh giới hạn độ dài đường dẫn Windows. Ghi đè bằng HARNESS_WORKTREE_ROOT.
+worktree:
+  root: "%LOCALAPPDATA%\\hw"
+  max_root_len: 80         # mặc định tạm
+
+# Heartbeat agent (R16: mặc định tạm, chỉnh theo dữ liệu thật).
+heartbeat:
+  interval_s: 15           # agent ghi heartbeat mỗi 15 giây
+  timeout_s: 120           # quá 120 giây không có heartbeat mới thì stale
