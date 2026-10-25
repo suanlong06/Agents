@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/approval.schema.json",
+  "title": "Approval mirror record v1",
+  "description": "Một dòng JSONL trong approvals.jsonl (state_dir, ngoài repo, R13): BẢN PHẢN CHIẾU một GitHub review của người dùng (R7). Nguồn sự thật là GitHub review gắn với `commit_id`; bản phản chiếu không bao giờ là nguồn sự thật và không được dùng để quyết định merge. Key idempotent (pr, review_id, state). Best-effort, không chống giả mạo (R15). Trường lạ được bỏ qua để tương thích N-1/N+1.",
+  "type": "object",
+  "required": ["v", "mirrored_at", "source", "repo", "pr", "review_id", "reviewer", "state", "commit_id", "submitted_at", "html_url"],
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "mirrored_at": {"type": "string", "minLength": 1, "description": "Lúc phản chiếu (KST), không phải lúc duyệt."},
+    "source": {"const": "github"},
+    "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "pr": {"type": "integer", "minimum": 1},
+    "review_id": {"type": "integer", "minimum": 1},
+    "reviewer": {"type": "string", "minLength": 1, "description": "GitHub login của người duyệt (CODEOWNERS)."},
+    "state": {"enum": ["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"]},
+    "commit_id": {"type": "string", "pattern": "^[0-9a-f]{40}$", "description": "SHA mà review gắn với."},
+    "submitted_at": {"type": ["string", "null"]},
+    "html_url": {"type": ["string", "null"]}
+  }
+}

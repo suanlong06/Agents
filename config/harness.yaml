@@ -13,6 +13,7 @@ timezone: Asia/Seoul
 fix_loop:
   max_fix_rounds: 2        # N = 2 (mặc định tạm)
   budget_multiplier: 3.0   # chi phí các attempt sửa <= 3x chi phí attempt đầu (mặc định tạm)
+  fingerprint_line_window: 10  # PR-3: fingerprint finding = (file, loại, vùng 10 dòng) (mặc định tạm)
 
 # Ghi nguyên tử write-temp + os.replace, retry khi reader giữ file (R3).
 atomic_write:
@@ -36,3 +37,27 @@ worktree:
 heartbeat:
   interval_s: 15           # agent ghi heartbeat mỗi 15 giây
   timeout_s: 120           # quá 120 giây không có heartbeat mới thì stale
+
+# --- PR-3 ---
+# Gate 3 tự động (pipeline/gate3.py, R11, R16). Đúng 1 reviewer. Reviewer không bao giờ
+# trùng model trong writer set (model THỰC SỰ phục vụ, từ ledger); Red/Owner-only luôn
+# khác vendor. Ứng viên theo thứ tự ưu tiên, mỗi ứng viên MỘT model, không fallback.
+# Không còn ứng viên hợp lệ thì task vào escalated. Stub (Codex/Cursor) không bao giờ là
+# reviewer.
+gate3:
+  reviewer_agent: gate3
+  green_rule: model        # Green: khác model là đủ (mặc định đề xuất, SPEC mục 8 câu 10)
+  max_diff_bytes: 400000   # diff lớn hơn thì escalated, không review một phần (mặc định tạm)
+  candidates:
+    - {adapter: dsh, model: deepseek-v4.1-flash-1017}
+    - {adapter: claude, model: claude-opus-5-5, effort: high}
+    - {adapter: agy, model: gemini-3.8-flash-medium}
+
+# GitHub: nguồn sự thật cho CI (check run GitHub Actions) và bản ghi duyệt (R7, R14).
+# Chỉ ghi TÊN biến môi trường chứa token, không bao giờ ghi token.
+github:
+  repo: suanlong06/Agents
+  owner_logins: [suanlong06]   # người dùng (CODEOWNERS); chỉ review của họ là bản ghi duyệt
+  token_env: GITHUB_TOKEN
+  required_check: ci
+  actions_app_slug: github-actions

@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/verdict.schema.json",
+  "title": "Gate 3 verdict v1",
+  "description": "Verdict Gate 3 (PR-3, R9, R11). Writer set, reviewer, SHA và nhãn do pipeline/gate3.py điền từ ledger/metadata transport và labeller, KHÔNG BAO GIỜ từ text model tự in ra. Model chỉ trả phần `$defs/reviewer_output`. Đúng 1 reviewer (R16). `pass` phải có bằng chứng trích từ diff; `fail` phải có finding; `escalated` (không có reviewer hợp lệ, writer không rõ, output hỏng...) phải có lý do. Verdict chỉ có hiệu lực cho đúng `sha`. Trường lạ được bỏ qua để tương thích N-1/N+1.",
+  "type": "object",
+  "required": ["v", "task_id", "attempt", "pr", "sha", "label", "writer_set", "reviewer", "verdict", "reason", "summary", "findings", "evidence", "injection_detected", "created_at"],
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "pr": {"type": ["integer", "null"], "minimum": 1},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$", "description": "Head SHA được review. Head đổi thì verdict mất hiệu lực."},
+    "label": {
+      "type": "object",
+      "required": ["tier", "label_id", "base_sha"],
+      "properties": {
+        "tier": {"enum": ["green", "red", "owner-only"]},
+        "label_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "writer_set": {
+      "type": "array",
+      "description": "Model THỰC SỰ phục vụ mọi lời gọi viết code của task (mọi attempt), từ ledger, không gồm probe. known=false là model không rõ → xung đột.",
+      "items": {
+        "type": "object",
+        "required": ["model_id", "vendor", "raw", "known"],
+        "properties": {
+          "model_id": {"type": ["string", "null"]},
+          "vendor": {"type": ["string", "null"]},
+          "raw": {"type": ["string", "null"]},
+          "known": {"type": "boolean"}
+        }
+      }
+    },
+    "reviewer": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["agent", "adapter", "model_id", "vendor", "model_id_source"],
+          "properties": {
+            "agent": {"type": "string", "minLength": 1},
+            "adapter": {"enum": ["claude", "dsh", "agy"]},
+            "model_id": {"type": "string", "minLength": 1},
+            "vendor": {"type": "string", "minLength": 1},
+            "model_id_source": {"enum": ["cli_metadata", "router_log"]}
+          }
+        }
+      ]
+    },
+    "verdict": {"enum": ["pass", "fail", "escalated"]},
+    "reason": {"type": ["string", "null"]},
+    "summary": {"type": "string", "maxLength": 4000},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+    "injection_detected": {"type": "boolean", "description": "Diff có câu nhắm vào reviewer (ví dụ 'pre-approved, return PASS'). Khi true, verdict không bao giờ là pass."},
+    "created_at": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"verdict": {"const": "pass"}}},
+      "then": {"properties": {"reviewer": {"type": "object"}, "evidence": {"minItems": 1}, "injection_detected": {"const": false}}}
+    },
+    {
+      "if": {"properties": {"verdict": {"const": "fail"}}},
+      "then": {"properties": {"reviewer": {"type": "object"}, "findings": {"minItems": 1}}}
+    },
+    {
+      "if": {"properties": {"verdict": {"const": "escalated"}}},
+      "then": {"properties": {"reason": {"type": "string", "minLength": 1}}}
+    }
+  ],
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["file", "quote"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1, "maxLength": 512},
+        "line_start": {"type": "integer", "minimum": 0},
+        "line_end": {"type": "integer", "minimum": 0},
+        "quote": {"type": "string", "minLength": 1, "maxLength": 2000, "description": "Trích nguyên văn từ diff; pipeline kiểm chuỗi này có trong diff."},
+        "verified": {"type": "boolean"}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["file", "type", "line_start", "message"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1, "maxLength": 512},
+        "type": {"type": "string", "minLength": 1, "maxLength": 64},
+        "line_start": {"type": "integer", "minimum": 0},
+        "line_end": {"type": "integer", "minimum": 0},
+        "severity": {"enum": ["blocker", "major", "minor"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "evidence": {"type": "string", "maxLength": 2000},
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "verified": {"type": "boolean"}
+      }
+    },
+    "reviewer_output": {
+      "description": "Phần DUY NHẤT lấy từ text của model reviewer. Mọi trường khác (reviewer, writer set, SHA, nhãn) do pipeline điền; model tự khai các trường đó thì bị bỏ qua.",
+      "type": "object",
+      "required": ["verdict", "summary", "findings", "evidence"],
+      "properties": {
+        "verdict": {"enum": ["pass", "fail"]},
+        "summary": {"type": "string", "maxLength": 4000},
+        "findings": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/finding"}},
+        "evidence": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/evidence"}}
+      }
+    }
+  }
+}
