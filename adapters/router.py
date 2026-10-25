@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -47,8 +48,9 @@ _TOP_KEYS = {"schema_version", "routes", "adapters", "circuit_breaker", "probe",
 _ROUTE_KEYS = {"adapter", "chain"}
 _STEP_KEYS = {"model", "effort"}
 _ADAPTER_KEYS = {"command", "call_timeout_s", "probe_timeout_s", "usage", "tokens_reported",
-                 "request_id_env", "probe_url", "request_id_header"}
+                 "request_id_env", "probe_url", "request_id_header", "api_key_env"}
 _ROUTER_ADAPTERS = frozenset({"dsh", "agy"})
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ROUTER_LOG_KEYS = {"path", "request_id_field", "model_field", "input_tokens_field",
                     "output_tokens_field", "wait_s"}
 
@@ -125,6 +127,9 @@ def validate_routing(data: Mapping, aliases: ModelAliases, *, where: str = "rout
         cmd = spec.get("command")
         if not isinstance(cmd, list) or not cmd or not all(isinstance(a, str) and a for a in cmd):
             raise ConfigError(f"{where}: adapters.{name}.command phải là list chuỗi khác rỗng")
+        if not any("{model}" in a for a in cmd):
+            raise ConfigError(f"{where}: adapters.{name}.command phải truyền model đã chọn qua {{model}} "
+                              f"(định tuyến theo độ khó, SPEC mục 4)")
         for k in ("call_timeout_s", "probe_timeout_s"):
             if k in spec:
                 spec[k] = _pos_number(spec[k], f"{where}: adapters.{name}.{k}")
@@ -133,12 +138,16 @@ def validate_routing(data: Mapping, aliases: ModelAliases, *, where: str = "rout
         if not isinstance(spec.get("tokens_reported", True), bool):
             raise ConfigError(f"{where}: adapters.{name}.tokens_reported phải là bool")
         if name not in _ROUTER_ADAPTERS:
-            bad = {"request_id_env", "probe_url", "request_id_header", "tokens_reported"} & set(spec)
+            bad = {"request_id_env", "probe_url", "request_id_header", "tokens_reported", "api_key_env"} & set(spec)
             if bad:
                 raise ConfigError(f"{where}: adapters.{name} không đi qua 9Router, không dùng {sorted(bad)}")
         env = spec.get("request_id_env", [])
         if not isinstance(env, list) or not all(isinstance(e, str) and e for e in env):
             raise ConfigError(f"{where}: adapters.{name}.request_id_env phải là list chuỗi")
+        key_env = spec.get("api_key_env")
+        if key_env is not None and not (isinstance(key_env, str) and _ENV_NAME_RE.match(key_env)):
+            # Config chỉ chứa TÊN biến môi trường mang khóa, không bao giờ chứa khóa.
+            raise ConfigError(f"{where}: adapters.{name}.api_key_env phải là tên biến môi trường")
         adapters[name] = spec
 
     routes_raw = _check_keys(data.get("routes"), set(DIFFICULTIES), f"{where}: routes")
@@ -236,7 +245,7 @@ def build_adapters(routing: RoutingConfig, aliases: ModelAliases, *, prices=None
         if name in _ROUTER_ADAPTERS:
             kw.update(router_log=router_log, http=http,
                       request_id_env=tuple(spec.get("request_id_env", ())))
-            for k in ("tokens_reported", "probe_url", "request_id_header"):
+            for k in ("tokens_reported", "probe_url", "request_id_header", "api_key_env"):
                 if k in spec:
                     kw[k] = spec[k]
         out[name] = reg[name](**kw)

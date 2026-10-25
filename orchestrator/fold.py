@@ -6,7 +6,14 @@ Vòng fold:
 2. Dòng hỏng hoặc sai schema → cách ly vào ``quarantine`` của snapshot, fold đi tiếp.
 3. Event id ``(agent, pid, proc_start, seq)``: seq <= watermark của
    ``agent|pid|proc_start`` thì không gây thêm hiệu ứng.
-4. Áp event lên bản sao snapshot; hiệu ứng phụ (ledger, audit) idempotent theo key.
+4. Gom event mới của MỌI nguồn rồi áp lên bản sao snapshot theo nhiều lượt: event bị
+   ``InvalidTransition`` (ví dụ ``spec_review`` của process sau, mà file của nó xếp
+   trước file chứa ``spec_draft``) được HOÃN sang lượt sau, cùng mọi event sau nó
+   trong cùng nguồn (giữ thứ tự seq). Lần thử bị hoãn không tiến watermark, không
+   tính ``rejected``, không ghi audit. Hết lượt (``MAX_DEFER_PASSES``) hoặc một lượt
+   không tiến được thì event còn hoãn được áp lần cuối như bình thường (bị từ chối
+   thì tính ``rejected``, tiến watermark, ghi audit). Hiệu ứng phụ (ledger, audit)
+   idempotent theo key.
 5. Ghi snapshot (tasks + offsets + watermarks) trong MỘT lần ghi nguyên tử. Ghi
    thất bại thì offset không tiến, health = error, ném ``StateWriteError``.
 
@@ -37,6 +44,9 @@ from .state import (
 )
 
 ORCHESTRATOR_AGENT = "orchestrator"
+# Số lượt tối đa áp lại event bị hoãn trong một lần fold (mặc định tạm, R16). Mỗi lượt
+# phải tiến được ít nhất một event, không thì dừng sớm.
+MAX_DEFER_PASSES = 16
 
 
 @dataclass
@@ -113,6 +123,7 @@ class Orchestrator:
         self.guard.ensure_held()
         result = FoldResult()
         working = copy.deepcopy(self.snapshot)
+        pending: list[dict] = []
         for src in sources:
             name = self._source_name(src)
             offset = working["offsets"].get(name, 0)
@@ -135,8 +146,9 @@ class Orchestrator:
                     self._quarantine(working, name, line_off, raw, str(exc))
                     result.quarantined += 1
                     continue
-                self._apply(working, ev, result)
+                pending.append(ev)
             working["offsets"][name] = new_offset
+        self._apply_pending(working, pending, result)
 
         working["as_of"] = self._clock()
         working["fold_count"] += 1
@@ -201,12 +213,42 @@ class Orchestrator:
             "ts": self._clock(),
         })
 
-    def _apply(self, working: dict, ev: dict, result: FoldResult) -> None:
+    def _apply_pending(self, working: dict, events: list[dict], result: FoldResult) -> None:
+        """Áp ``events`` theo lượt, hoãn event chưa đủ điều kiện tiên quyết (xem docstring module)."""
+        for _ in range(MAX_DEFER_PASSES):
+            if not events:
+                return
+            deferred: list[dict] = []
+            blocked: set[str] = set()  # nguồn có event bị hoãn ở lượt này
+            for ev in events:
+                src_key = event_source_key(ev)
+                if self._is_duplicate(working, ev):
+                    result.duplicates += 1
+                elif src_key in blocked or not self._apply(working, ev, result, can_defer=True):
+                    # Event sau event bị hoãn của cùng nguồn cũng hoãn: áp nó trước sẽ đẩy
+                    # watermark qua seq của event bị hoãn, event đó sẽ thành "trùng".
+                    blocked.add(src_key)
+                    deferred.append(ev)
+            if len(deferred) == len(events):
+                break  # lượt này không tiến được: thử thêm cũng vô ích
+            events = deferred
+        for ev in events:
+            self._apply(working, ev, result)
+
+    @staticmethod
+    def _is_duplicate(working: dict, ev: dict) -> bool:
+        return ev["seq"] <= working["watermarks"].get(event_source_key(ev), 0)
+
+    def _apply(self, working: dict, ev: dict, result: FoldResult, *, can_defer: bool = False) -> bool:
+        """Áp một event. Trả ``False`` nếu event bị hoãn (chỉ khi ``can_defer``).
+
+        Lần thử bị hoãn không để lại dấu vết: các hàm chuyển trạng thái ném
+        ``InvalidTransition`` trước khi sửa task, watermark chưa tiến, audit chưa ghi.
+        """
         src_key = event_source_key(ev)
-        if ev["seq"] <= working["watermarks"].get(src_key, 0):
+        if self._is_duplicate(working, ev):
             result.duplicates += 1  # đã áp: không thêm hiệu ứng
-            return
-        working["watermarks"][src_key] = ev["seq"]
+            return True
 
         tasks = working["tasks"]
         task_id = ev["task_id"]
@@ -245,10 +287,13 @@ class Orchestrator:
                 )
                 outcome = "applied" if status == "recorded" else "duplicate_call"
         except (InvalidTransition, LedgerConflict) as exc:
+            if can_defer and isinstance(exc, InvalidTransition):
+                return False
             outcome, detail = "rejected", {"error": str(exc)}
             result.rejected += 1
         else:
             result.applied += 1
+        working["watermarks"][src_key] = ev["seq"]
 
         task = tasks.get(task_id)
         attempt = p.get("attempt") if ev["type"] == "model_call" else (task or {}).get("attempt")
@@ -261,6 +306,7 @@ class Orchestrator:
             task_id=task_id, attempt=attempt, pr=(task or {}).get("pr"),
             detail=detail, dedup_key=f"event:{event_id(ev)}",
         )
+        return True
 
     @staticmethod
     def _require_task(tasks: dict, task_id: str) -> dict:

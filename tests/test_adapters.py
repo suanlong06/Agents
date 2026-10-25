@@ -159,6 +159,34 @@ class EveryRealAdapterWritesR5Test(AdapterTestCase):
         (u,) = result.usages
         self.assertEqual((u.served.model_id, u.input_tokens, u.output_tokens), ("claude-opus-5-5", 150, 15))
 
+    def test_missing_model_usage_token_fields_are_estimated_never_silent_zero(self):
+        # R5: trường token thiếu không được coi là 0 với estimated = false (đếm thiếu im lặng).
+        prompt = "x" * 400
+        cases = {
+            "no cache fields": {"inputTokens": 1000, "outputTokens": 200},
+            "no outputTokens": {"inputTokens": 1000, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+            "no inputTokens": {"outputTokens": 200, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+            "bad type": {"inputTokens": "1000", "outputTokens": 200, "cacheReadInputTokens": 0,
+                         "cacheCreationInputTokens": 0},
+            "empty": {},
+        }
+        for i, (what, u) in enumerate(cases.items()):
+            with self.subTest(what):
+                adapter = self.claude(claude_json({"claude-opus-5-5": u}, result="kết quả dài"), ledger=None)
+                (usage,) = adapter.run(req(call_id=f"c-{i}", prompt=prompt)).usages
+                self.assertEqual(usage.served.model_id, "claude-opus-5-5")
+                self.assertTrue(usage.estimated)
+                known_in = u["inputTokens"] if isinstance(u.get("inputTokens"), int) else 0
+                self.assertGreaterEqual(usage.input_tokens, max(known_in, estimate_tokens(prompt)))
+                self.assertEqual(usage.output_tokens, u.get("outputTokens", estimate_tokens("kết quả dài")))
+                self.assertGreater(usage.output_tokens, 0)
+
+        self.claude(claude_json({"claude-opus-5-5": {"inputTokens": 1000}})).run(req(prompt=prompt))
+        (rec,) = self.folded_ledger()
+        self.assertTrue(rec["estimated"])
+        self.assertGreaterEqual(rec["input_tokens"], 1000)
+        self.assertGreater(rec["output_tokens"], 0)
+
 
 class StdoutModelIdIsNeverServedModelTest(AdapterTestCase):
     """N4: model_id trong stdout (text model in ra) không bao giờ là model thực sự phục vụ."""
@@ -363,6 +391,60 @@ class RouterProbeHttpTest(AdapterTestCase):
         with self.assertRaises(ConfigError):
             self.dsh(probe_url="http://10.0.0.5:20128/v1/chat/completions")
 
+    PROBE_URL = "http://127.0.0.1:20128/v1/chat/completions"
+
+    def test_probe_sends_bearer_key_from_environment_when_configured(self):
+        http = self.FakeHttp(self.r9)
+        adapter = self.dsh(http=http, probe_url=self.PROBE_URL, api_key_env="NINEROUTER_API_KEY",
+                           environ={"NINEROUTER_API_KEY": "k-test-123"})
+        adapter.probe("deepseek-v4.1-flash-1017")
+        headers = http.calls[0][2]
+        self.assertEqual(headers["Authorization"], "Bearer k-test-123")
+        self.assertIn("X-Request-Id", headers)
+
+    def test_probe_without_configured_key_sends_no_authorization(self):
+        for kw in ({}, {"api_key_env": "NINEROUTER_API_KEY", "environ": {}},
+                   {"api_key_env": "NINEROUTER_API_KEY", "environ": {"NINEROUTER_API_KEY": ""}}):
+            with self.subTest(kw=kw):
+                http = self.FakeHttp(self.r9)
+                self.dsh(http=http, probe_url=self.PROBE_URL, **kw).probe("deepseek-v4.1-flash-1017")
+                self.assertNotIn("Authorization", http.calls[0][2])
+
+    def test_api_key_env_must_be_a_variable_name_not_a_secret(self):
+        for bad in ("sk-live-abc123", "Bearer abc", "", "1KEY", 42):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                self.dsh(api_key_env=bad)
+
+    def test_keyed_router_probe_with_key_closes_breaker(self):
+        """9Router có khóa: probe không gửi khóa thì 401 mãi, breaker bị khóa vĩnh viễn."""
+        outer = self
+
+        class KeyedHttp(self.FakeHttp):
+            def post(self, url, payload, *, headers, timeout_s):
+                if headers.get("Authorization") != "Bearer k-test":
+                    self.calls.append((url, payload, dict(headers), timeout_s))
+                    raise ServiceUnavailable(f"{url}: HTTP 401")
+                return super().post(url, payload, headers=headers, timeout_s=timeout_s)
+
+        def half_open_adapter(environ):
+            adapter = outer.dsh(timeout(), outer.r9.serve("xh/deepseek-v4.1-flash-1017", inp=1, out=1),
+                                http=KeyedHttp(outer.r9), probe_url=outer.PROBE_URL,
+                                api_key_env="NINEROUTER_API_KEY", environ=environ,
+                                breaker_policy=BreakerPolicy(1, 60))
+            with outer.assertRaises(ServiceUnavailable):
+                adapter.run(req("deepseek-v4.1-flash-1017", effort=None))
+            outer.clock.t += 60
+            return adapter
+
+        adapter = half_open_adapter({})
+        with self.assertRaises(ServiceUnavailable):
+            adapter.run(req("deepseek-v4.1-flash-1017", effort=None, call_id="c-2"))
+        self.assertEqual(adapter.breaker("deepseek-v4.1-flash-1017").state, CircuitBreaker.OPEN)
+
+        adapter = half_open_adapter({"NINEROUTER_API_KEY": "k-test"})
+        adapter.run(req("deepseek-v4.1-flash-1017", effort=None, call_id="c-3"))
+        self.assertEqual(adapter.breaker("deepseek-v4.1-flash-1017").state, CircuitBreaker.CLOSED)
+
 
 class CostTest(AdapterTestCase):
     def test_cost_uses_prices_and_unknown_model_has_no_cost(self):
@@ -381,6 +463,17 @@ class CommandTemplateTest(unittest.TestCase):
         self.assertNotIn("--effort", adapter.argv(req(effort=None)))
         with self.assertRaises(ConfigError):
             ClaudeAdapter(aliases=ALIASES, command=["claude", "-p", "{prompt}"])
+
+    def test_dsh_passes_selected_model_and_command_without_model_is_rejected(self):
+        # SPEC mục 4: model chọn theo độ khó phải tới được CLI, không để CLI dùng model mặc định.
+        runner = FakeRunner("{}")
+        DshAdapter(aliases=ALIASES, runner=runner).run(req("deepseek-v4.1-flash-1017", effort=None))
+        argv = runner.calls[0]["argv"]
+        self.assertEqual(argv[argv.index("--model") + 1], "deepseek-v4.1-flash-1017")
+        for cls, cmd in ((DshAdapter, ["dsh", "--profile", "headless"]),
+                         (AntigravityAdapter, ["agy", "-p"]), (ClaudeAdapter, ["claude", "-p"])):
+            with self.subTest(cls=cls.__name__), self.assertRaisesRegex(ConfigError, "model"):
+                cls(aliases=ALIASES, command=cmd)
 
 
 class SubprocessRunnerTest(unittest.TestCase):

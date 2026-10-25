@@ -7,7 +7,7 @@ from unittest import mock
 
 from adapters import router as router_mod
 from adapters.antigravity import AntigravityAdapter
-from adapters.base import ConfigError, InboxLedgerSink, ModelAliases, NotAvailable, load_yaml
+from adapters.base import CallRequest, ConfigError, InboxLedgerSink, ModelAliases, NotAvailable, load_yaml
 from adapters.claude import ClaudeAdapter
 from adapters.codex_stub import CodexStub
 from adapters.cursor_stub import CursorStub
@@ -115,6 +115,9 @@ class RoutingConfigValidationTest(unittest.TestCase):
             lambda d: d["adapters"]["claude"].update(probe_url="http://127.0.0.1:1/"),
             lambda d: d["adapters"]["dsh"].update(call_timeout_s=0),
             lambda d: d["circuit_breaker"].update(failure_threshold=0),
+            lambda d: d["adapters"]["dsh"].update(command=["dsh", "--profile", "headless"]),
+            lambda d: d["adapters"]["agy"].update(api_key_env="sk-live-not-a-variable-name"),
+            lambda d: d["adapters"]["claude"].update(api_key_env="ANTHROPIC_API_KEY"),
         ]
         for fn in bad:
             with self.subTest(fn=fn), self.assertRaises(ConfigError):
@@ -307,6 +310,24 @@ class DshAgyHaveNoFallbackTest(RouterTestCase):
             self.assertEqual(self.dispatch(router, "medium", call_id=f"c-{i}").status, "blocked")
         self.assertEqual(len(router.adapters["dsh"].runner.calls), 3)
         self.assertIn("circuit breaker", MuseMonitor.read_all(self.state_dir)[-1]["message"])
+
+    def test_medium_route_passes_selected_model_to_dsh(self):
+        router = self.make_router(dsh_script=[self.r9.serve("xh/deepseek-v4.1-flash-1017", inp=7, out=3)])
+        self.assertEqual(self.dispatch(router, "medium").status, "ok")
+        (call,) = router.adapters["dsh"].runner.calls
+        self.assertEqual(model_of(call["argv"]), self.routing.routes["medium"].chain[0].model)
+
+    def test_repo_routing_builds_probe_auth_from_environment_variable_name(self):
+        for name in ("dsh", "agy"):
+            self.assertEqual(self.routing.adapters[name]["api_key_env"], "NINEROUTER_API_KEY")
+        built = build_adapters(self.routing, ALIASES, runner=FakeRunner(), router_log=self.r9.log)
+        medium = CallRequest(task_id="T-1", attempt=1, call_id="c", prompt="p", model="deepseek-v4.1-flash-1017")
+        self.assertEqual(model_of(built["dsh"].argv(medium)), "deepseek-v4.1-flash-1017")
+        with mock.patch.dict("os.environ", {"NINEROUTER_API_KEY": "k-env"}):
+            self.assertEqual(built["dsh"].probe_headers("r-1")["Authorization"], "Bearer k-env")
+            self.assertEqual(built["agy"].probe_headers("r-1")["Authorization"], "Bearer k-env")
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertNotIn("Authorization", built["dsh"].probe_headers("r-1"))
 
     def test_dsh_success_writes_ledger(self):
         router = self.make_router(dsh_script=[self.r9.serve("xh/deepseek-v4.1-flash-1017", inp=7, out=3)])

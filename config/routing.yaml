@@ -35,13 +35,17 @@ adapters:
     probe_timeout_s: 60      # CLI cần khởi động, nên dài hơn probe 9Router
     usage: delta             # JSON của `claude -p` báo usage của riêng lời gọi đó
   dsh:
-    command: [dsh, --profile, headless]
+    # {model} bắt buộc: model chọn theo độ khó phải tới được CLI (SPEC mục 4).
+    command: [dsh, --profile, headless, --model, "{model}"]
     call_timeout_s: 1800
     probe_timeout_s: 2       # SPEC mục 8: probe completion thật, timeout 2 giây
     usage: cumulative        # dsh báo usage cộng dồn theo phiên -> đổi ra delta
     request_id_env: [NINEROUTER_REQUEST_ID]
     request_id_header: X-Request-Id
     probe_url: "http://127.0.0.1:20128/v1/chat/completions"
+    # 9Router/bridge có khóa: probe gửi "Authorization: Bearer <giá trị biến này>".
+    # Chỉ ghi TÊN biến môi trường, không bao giờ ghi khóa. Tên biến là GIẢ ĐỊNH.
+    api_key_env: NINEROUTER_API_KEY
   agy:
     command: [agy, -p, --output-format, json, --model, "{model}"]
     call_timeout_s: 1800
@@ -50,6 +54,9 @@ adapters:
     request_id_env: [NINEROUTER_REQUEST_ID]
     request_id_header: X-Request-Id
     probe_url: "http://127.0.0.1:20129/v1/chat/completions"
+    # 9Router/bridge có khóa: probe gửi "Authorization: Bearer <giá trị biến này>".
+    # Chỉ ghi TÊN biến môi trường, không bao giờ ghi khóa. Tên biến là GIẢ ĐỊNH.
+    api_key_env: NINEROUTER_API_KEY
 
 # Mở sau 3 lỗi liên tiếp, giữ 5 phút (SPEC mục 8). Breaker riêng cho từng model.
 circuit_breaker:

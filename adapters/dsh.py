@@ -7,6 +7,8 @@
 - ``dsh`` báo usage CỘNG DỒN theo phiên (mặc định ``usage: cumulative`` trong
   ``routing.yaml``): đổi ra delta trước khi ghi ledger (R5). Usage trong log
   9Router là theo từng request nên được ưu tiên.
+- Model đã chọn theo độ khó được truyền cho ``dsh`` qua ``--model {model}`` (SPEC mục
+  4): không để ``dsh`` tự dùng model mặc định của profile.
 - Probe: completion thật gửi thẳng tới 9Router ``:20128``, timeout riêng.
 """
 
@@ -14,7 +16,7 @@ from __future__ import annotations
 
 from .transport import RouterCliAdapter
 
-DEFAULT_COMMAND = ("dsh", "--profile", "headless")
+DEFAULT_COMMAND = ("dsh", "--profile", "headless", "--model", "{model}")
 
 
 class DshAdapter(RouterCliAdapter):

@@ -5,6 +5,8 @@
   timeout mỗi lời gọi, quá hạn thì giết cả cây process.
 - ``HttpJsonClient``: POST JSON tới endpoint **loopback** (bridge ``:20129``, 9Router
   ``:20128``), bỏ qua proxy, timeout mỗi lời gọi. Dùng cho probe bằng completion thật.
+  9Router/bridge có khóa: probe gửi ``Authorization: Bearer <khóa>``, khóa đọc từ biến
+  môi trường do config đặt tên (``api_key_env``), không bao giờ nằm trong code/config.
 - ``RouterLog``: đọc log JSONL của 9Router, join theo request id để lấy model THỰC
   SỰ phục vụ và usage theo từng request (vốn là delta).
 - ``CliAdapter`` / ``RouterCliAdapter``: lớp nền cho ``claude``, ``dsh``, ``agy``.
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +48,7 @@ from .base import (
 )
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ALLOWED_PLACEHOLDERS = ("{model}", "{effort}")
 
 
@@ -250,6 +254,10 @@ class CliAdapter(Adapter):
             if "{" in rest or "}" in rest:
                 # Prompt không bao giờ lên dòng lệnh; chỉ có model và effort từ config.
                 raise ConfigError(f"{self.name}: command chỉ được dùng {_ALLOWED_PLACEHOLDERS}: {a!r}")
+        if not any("{model}" in a for a in command):
+            # Thiếu {model} thì CLI chạy model mặc định của nó: định tuyến theo độ khó
+            # (SPEC mục 4) mất hiệu lực mà không ai biết.
+            raise ConfigError(f"{self.name}: command phải truyền model đã chọn qua {{model}}")
         if usage_mode not in ("delta", "cumulative"):
             raise ConfigError(f"{self.name}: usage phải là delta hoặc cumulative")
         self.command = tuple(command)
@@ -293,7 +301,8 @@ class RouterCliAdapter(CliAdapter):
 
     def __init__(self, *, router_log: RouterLog | None = None, request_id_env: Sequence[str] = (),
                  tokens_reported: bool = True, probe_url: str | None = None,
-                 request_id_header: str = "X-Request-Id", http: HttpJsonClient | None = None, **kw):
+                 request_id_header: str = "X-Request-Id", http: HttpJsonClient | None = None,
+                 api_key_env: str | None = None, environ: Mapping[str, str] | None = None, **kw):
         super().__init__(**kw)
         self.router_log = router_log
         self.request_id_env = tuple(request_id_env)
@@ -301,6 +310,20 @@ class RouterCliAdapter(CliAdapter):
         self.probe_url = check_loopback_url(probe_url) if probe_url else None
         self.request_id_header = request_id_header
         self.http = http or HttpJsonClient()
+        if api_key_env is not None and not (isinstance(api_key_env, str) and ENV_NAME_RE.match(api_key_env)):
+            # Chỉ là TÊN biến môi trường; không bao giờ là bản thân khóa.
+            raise ConfigError(f"{self.name}: api_key_env phải là tên biến môi trường")
+        self.api_key_env = api_key_env
+        self._environ = environ if environ is not None else os.environ
+
+    def probe_headers(self, rid: str) -> dict[str, str]:
+        """Header của probe. Có khóa trong môi trường thì gửi kèm, để 9Router/bridge có
+        khóa không trả 401 mãi và circuit breaker không bị khóa vĩnh viễn."""
+        headers = {self.request_id_header: rid}
+        key = self._environ.get(self.api_key_env) if self.api_key_env else None
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        return headers
 
     def _invoke(self, request: CallRequest, *, timeout_s: float, probe: bool) -> CallResult:
         rid = new_request_id()
@@ -361,7 +384,7 @@ class RouterCliAdapter(CliAdapter):
             self.probe_url,
             {"model": request.model, "messages": [{"role": "user", "content": request.prompt}],
              "max_tokens": 16, "stream": False},
-            headers={self.request_id_header: rid}, timeout_s=timeout_s,
+            headers=self.probe_headers(rid), timeout_s=timeout_s,
         )
         choices = resp.get("choices")
         text = ""
