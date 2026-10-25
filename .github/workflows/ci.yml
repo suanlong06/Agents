@@ -14,4 +14,10 @@ jobs:
       - name: Install dependencies
         run: pip install PyYAML jsonschema referencing tzdata pytest
       - name: Run tests
-        run: python -m pytest -q
+        shell: pwsh
+        run: |
+          if (Test-Path tests) {
+            python -m pytest -q
+          } else {
+            Write-Host "No test suite yet (PR-0 stage); nothing to run."
+          }
