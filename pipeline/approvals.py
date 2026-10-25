@@ -88,13 +88,15 @@ class ApprovalMirror:
     FILE = "approvals.jsonl"
 
     def __init__(self, state_dir: Path, guard: WriterGuard, client: GitHubClient, *,
-                 owner_logins: Iterable[str], clock: Callable[[], str]):
+                 owner_logins: Iterable[str], clock: Callable[[], str], killswitch=None):
         guard.ensure_held()
         self.path = Path(state_dir) / self.FILE
         self.guard = guard
         self.client = client
         self.owners = _owners(owner_logins)
         self._clock = clock
+        # PR-4a: kill-switch bật → không đọc GitHub, không ghi bản phản chiếu.
+        self.killswitch = killswitch
         terminate_torn_tail(self.path)
         self._keys = {self.key(r) for r in self.read(self.path)}
 
@@ -135,6 +137,8 @@ class ApprovalMirror:
     def sync(self, pr: int) -> SyncResult:
         """Đọc review của ``pr`` từ GitHub, append review mới của người dùng."""
         self.guard.ensure_held()
+        if self.killswitch is not None:
+            self.killswitch.check("approvals.sync")
         result = SyncResult()
         for review in self.client.paginate(f"pulls/{int(pr)}/reviews"):
             rec = self._record_for(pr, review)

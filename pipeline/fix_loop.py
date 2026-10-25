@@ -60,7 +60,7 @@ class FixDecision:
 class FixLoop:
     def __init__(self, policy: FixPolicy, *, line_window: int = DEFAULT_LINE_WINDOW,
                  probe_task_id: str = DEFAULT_PROBE_TASK_ID, events=None,
-                 timezone: str = "Asia/Seoul", clock: Callable[[], str] | None = None):
+                 timezone: str = "Asia/Seoul", clock: Callable[[], str] | None = None, killswitch=None):
         if policy.max_fix_rounds < 0 or policy.budget_multiplier < 0:
             raise FixLoopError("max_fix_rounds và budget_multiplier phải >= 0")
         self.policy = policy
@@ -70,6 +70,12 @@ class FixLoop:
         self.agent = getattr(events, "agent", FIX_LOOP_AGENT)
         tz = ZoneInfo(timezone)
         self._clock = clock or (lambda: datetime.now(tz).isoformat(timespec="milliseconds"))
+        # PR-4a: kill-switch bật → không ghi event vòng fix, không mở attempt mới.
+        self.killswitch = killswitch
+
+    def _check_killswitch(self, action: str) -> None:
+        if self.killswitch is not None:
+            self.killswitch.check(action)
 
     def build_fix_list(self, findings: Iterable[Mapping]) -> list[dict]:
         """Gộp finding theo fingerprint (cửa sổ dòng của vòng fix), thứ tự ổn định."""
@@ -105,6 +111,7 @@ class FixLoop:
         return self._round(task, [finding], ledger_records, previous_fingerprints, sha=ci.sha, source="ci")
 
     def _round(self, task: Mapping, findings, ledger_records, previous_fingerprints, *, sha, source) -> FixDecision:
+        self._check_killswitch(f"fix_loop.{source}")
         task_id = check_task_id(task["task_id"], self.probe_task_id)
         fix_list = self.build_fix_list(findings)
         if not fix_list:
@@ -134,6 +141,7 @@ class FixLoop:
 
     def open_fix_pr(self, task: Mapping, *, pr: int, sha: str | None) -> dict:
         """PR mới cho cùng ``task_id`` thay PR cũ: PR cũ thành ``superseded`` (R2)."""
+        self._check_killswitch("fix_loop.open_fix_pr")
         preview = start_new_attempt(dict(task), pr=pr, sha=sha, now=self._clock())
         if self.events is not None:
             kw = {"sha": sha} if sha else {}

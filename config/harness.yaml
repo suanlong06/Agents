@@ -61,3 +61,22 @@ github:
   token_env: GITHUB_TOKEN
   required_check: ci
   actions_app_slug: github-actions
+
+# --- PR-4a ---
+# Kill-switch fail-closed (orchestrator/killswitch.py, R8, R15). File JSON NGOÀI repo;
+# đường dẫn tương đối tính từ state_dir. Thiếu file, không đọc được hay sai định dạng thì
+# coi như ĐANG BẬT: mọi hành động tự động dừng. Chỉ người dùng đổi file này, bằng tay
+# (docs/runbooks/release.md); không qua dashboard. Best-effort, không chống giả mạo.
+killswitch:
+  file: killswitch.json
+
+# Shadow evaluator (release/shadow_eval.py). CHỈ ghi "would-merge" vào audit, không bao
+# giờ merge; auto-merge vẫn TẮT trong MVP. 4 điều kiện là OPEN DISCUSSION (SPEC mục 8).
+# Ngưỡng shadow trước khi XEM XÉT bật auto-merge (PR-4b): 2 tuần hoặc 20 PR (mặc định tạm).
+shadow:
+  min_days: 14
+  min_prs: 20
+
+# Kiểm tra read-only ở bước 11 (release/readonly_check.py, SPEC mục 8 câu 14).
+readonly_check:
+  max_new_errors: 0        # số bản ghi audit lỗi mới tối đa sau release (mặc định tạm)

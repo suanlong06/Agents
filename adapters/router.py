@@ -223,7 +223,7 @@ def build_router_log(routing: RoutingConfig):
 
 
 def build_adapters(routing: RoutingConfig, aliases: ModelAliases, *, prices=None, ledger=None,
-                   runner=None, http=None, router_log=None, clock=None) -> dict[str, Adapter]:
+                   runner=None, http=None, router_log=None, clock=None, killswitch=None) -> dict[str, Adapter]:
     """Dựng adapter cho mọi tên trong allowlist có cấu hình. Không bao giờ dựng stub."""
     reg = _registry()
     if router_log is None:
@@ -231,7 +231,7 @@ def build_adapters(routing: RoutingConfig, aliases: ModelAliases, *, prices=None
     out: dict[str, Adapter] = {}
     for name, spec in routing.adapters.items():
         kw = dict(aliases=aliases, prices=prices, ledger=ledger, breaker_policy=routing.breaker,
-                  command=tuple(spec["command"]), runner=runner)
+                  command=tuple(spec["command"]), runner=runner, killswitch=killswitch)
         if clock is not None:
             kw["clock"] = clock
         for src, dst in (("call_timeout_s", "call_timeout_s"), ("probe_timeout_s", "probe_timeout_s"),

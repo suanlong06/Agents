@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/manifest.schema.json",
+  "title": "Release manifest v1",
+  "description": "Manifest release (PR-4a, R10). LUÔN tính từ `git log --first-parent --reverse prevTag..newTag` bởi release/manifest.py, không bao giờ từ danh sách tự ghi. `entries` theo thứ tự cũ → mới; revert đi theo thứ tự NGƯỢC (mới → cũ), mỗi PR một `git revert` (merge commit dùng `-m 1`), qua PR, không force-push, không reset. Trường lạ được bỏ qua để tương thích N-1/N+1.",
+  "type": "object",
+  "required": ["v", "source", "generated_at", "prev_tag", "new_tag", "prev_sha", "new_sha", "manifest_id", "entries"],
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "source": {"const": "git log --first-parent --reverse prevTag..newTag"},
+    "generated_at": {"type": "string", "minLength": 1, "description": "KST (Asia/Seoul)."},
+    "prev_tag": {"type": "string", "minLength": 1},
+    "new_tag": {"type": "string", "minLength": 1},
+    "prev_sha": {"$ref": "#/$defs/sha"},
+    "new_sha": {"$ref": "#/$defs/sha"},
+    "manifest_id": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 của (prev_sha, new_sha, danh sách SHA): cùng git log → cùng id."},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["seq", "sha", "parents", "kind", "pr", "subject", "author", "authored_at"],
+        "properties": {
+          "seq": {"type": "integer", "minimum": 1},
+          "sha": {"$ref": "#/$defs/sha"},
+          "parents": {"type": "array", "items": {"$ref": "#/$defs/sha"}, "minItems": 1},
+          "kind": {"enum": ["merge", "squash", "direct"], "description": "merge: merge commit (revert -m 1); squash: commit có (#N) cuối tiêu đề; direct: commit thẳng lên main."},
+          "pr": {"type": ["integer", "null"], "minimum": 1},
+          "subject": {"type": "string"},
+          "author": {"type": "string"},
+          "authored_at": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+  }
+}

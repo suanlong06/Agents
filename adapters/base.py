@@ -447,6 +447,7 @@ class Adapter(ABC):
         probe_prompt: str = "Reply with exactly: OK",
         probe_task_id: str = "probe",
         clock: Callable[[], float] = time.monotonic,
+        killswitch=None,
     ):
         if call_timeout_s <= 0 or probe_timeout_s <= 0:
             raise ConfigError(f"{self.name}: timeout phải > 0")
@@ -460,6 +461,9 @@ class Adapter(ABC):
         self.probe_task_id = probe_task_id
         self._clock = clock
         self._breakers: dict[str, CircuitBreaker] = {}
+        # PR-4a: kill-switch (orchestrator.killswitch.KillSwitch, duck-typed để stub không
+        # import thêm gì). Bật → ``check`` ném trước mọi lời gọi model, kể cả probe.
+        self.killswitch = killswitch
 
     def breaker(self, model: str) -> CircuitBreaker:
         if model not in self._breakers:
@@ -470,7 +474,12 @@ class Adapter(ABC):
     def _invoke(self, request: CallRequest, *, timeout_s: float, probe: bool) -> CallResult:
         """Một lời gọi thật. Ném ``ServiceUnavailable`` khi tuyến sập/timeout."""
 
+    def _check_killswitch(self, what: str) -> None:
+        if self.killswitch is not None:
+            self.killswitch.check(f"{self.name}.{what}")
+
     def run(self, request: CallRequest) -> CallResult:
+        self._check_killswitch("run")
         br = self.breaker(request.model)
         if br.before_call(f"{self.name}/{request.model}") == CircuitBreaker.HALF_OPEN:
             self.probe(request.model)  # thử lại bằng completion thật trước khi giao việc
@@ -480,6 +489,7 @@ class Adapter(ABC):
 
     def probe(self, model: str) -> CallResult:
         """Probe bằng completion THẬT (không phải TCP/200), có timeout riêng."""
+        self._check_killswitch("probe")
         req = CallRequest(
             task_id=self.probe_task_id, attempt=1, prompt=self.probe_prompt, model=model,
             call_id=f"probe-{self.name}-{time.time_ns()}", agent="probe",
