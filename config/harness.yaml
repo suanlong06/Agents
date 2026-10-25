@@ -1,0 +1,26 @@
+# Cấu hình harness (PR-1a).
+# MỌI CON SỐ DƯỚI ĐÂY LÀ MẶC ĐỊNH TẠM (R16), KHÔNG PHẢI YÊU CẦU. Chỉnh theo dữ liệu thật.
+schema_version: 1
+
+# Runtime state nằm NGOÀI repo (R13). Ghi đè bằng biến môi trường HARNESS_STATE_DIR.
+# Trên máy này: C:\Users\water\AppData\Local\harness. Phải đổi khi tách OS user.
+state_dir: "%LOCALAPPDATA%\\harness"
+
+# Mọi thời điểm theo KST (R17; Windows cần gói tzdata).
+timezone: Asia/Seoul
+
+# Vòng fix, cộng dồn theo task_id, không reset khi mở PR mới (R2).
+fix_loop:
+  max_fix_rounds: 2        # N = 2 (mặc định tạm)
+  budget_multiplier: 3.0   # chi phí các attempt sửa <= 3x chi phí attempt đầu (mặc định tạm)
+
+# Ghi nguyên tử write-temp + os.replace, retry khi reader giữ file (R3).
+atomic_write:
+  max_attempts: 8
+  backoff_initial_s: 0.05
+  backoff_max_s: 0.5
+
+# Số byte tối đa của dòng hỏng được giữ lại trong vùng cách ly.
+quarantine_max_raw_bytes: 4096
+
+prices_path: config/prices.yaml

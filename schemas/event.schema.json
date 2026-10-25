@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/event.schema.json",
+  "title": "Harness event v1",
+  "description": "Một dòng JSONL do agent ghi vào inbox của chính nó, orchestrator fold vào state (R3). Id idempotent = (agent, pid, proc_start, seq). Trường lạ được bỏ qua để tương thích N-1/N+1.",
+  "type": "object",
+  "required": ["v", "agent", "pid", "proc_start", "seq", "ts", "task_id", "type", "model_id", "payload"],
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "agent": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "pid": {"type": "integer", "minimum": 0},
+    "proc_start": {"type": "string", "minLength": 1, "maxLength": 64, "description": "Thời điểm khởi động process, để PID tái sử dụng sau reboot không trùng id."},
+    "seq": {"type": "integer", "minimum": 1, "description": "Tăng dần trong một process."},
+    "ts": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "type": {"enum": ["task_created", "transition", "new_attempt", "model_call"]},
+    "model_id": {"type": ["string", "null"], "description": "Model thực sự phục vụ, lấy từ metadata transport hoặc log 9Router, không bao giờ từ text model tự in (R11)."},
+    "model_id_source": {"enum": ["cli_metadata", "router_log", "unknown"]},
+    "vendor": {"type": ["string", "null"]},
+    "sha": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$"},
+    "payload": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"type": {"const": "task_created"}}},
+      "then": {"properties": {"payload": {
+        "properties": {
+          "kind": {"enum": ["feature", "bugfix"]},
+          "title": {"type": "string"},
+          "parent_pr": {"type": ["integer", "null"], "minimum": 1}
+        }
+      }}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "transition"}}},
+      "then": {"properties": {"payload": {
+        "required": ["to"],
+        "properties": {
+          "to": {"type": "string", "minLength": 1},
+          "reason": {"type": ["string", "null"]},
+          "pr": {"type": ["integer", "null"], "minimum": 1}
+        }
+      }}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "new_attempt"}}},
+      "then": {"properties": {"payload": {
+        "required": ["pr"],
+        "properties": {"pr": {"type": "integer", "minimum": 1}}
+      }}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "model_call"}}},
+      "then": {
+        "required": ["model_id_source"],
+        "properties": {"payload": {
+          "required": ["call_id", "attempt", "input_tokens", "output_tokens", "estimated"],
+          "properties": {
+            "call_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "attempt": {"type": "integer", "minimum": 1},
+            "requested_model": {"type": ["string", "null"]},
+            "fallback_reason": {"type": ["string", "null"]},
+            "effort": {"type": ["string", "null"]},
+            "input_tokens": {"type": "integer", "minimum": 0, "description": "Delta, không phải cộng dồn theo phiên."},
+            "output_tokens": {"type": "integer", "minimum": 0, "description": "Delta, không phải cộng dồn theo phiên."},
+            "estimated": {"type": "boolean"}
+          }
+        }}
+      }
+    }
+  ]
+}

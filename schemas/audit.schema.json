@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/audit.schema.json",
+  "title": "Audit record v1",
+  "description": "Audit log append-only, có số thứ tự (R4). BEST-EFFORT, KHÔNG CHỐNG GIẢ MẠO cho tới khi tách OS user (R15). Không có hash chain. Trường không áp dụng thì là null nhưng luôn có mặt.",
+  "type": "object",
+  "required": ["v", "seq", "ts", "action", "result", "agent", "served_model", "vendor", "model_id_source", "sha", "task_id", "attempt", "pr", "dedup_key"],
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "seq": {"type": "integer", "minimum": 1},
+    "ts": {"type": "string", "description": "KST (Asia/Seoul)."},
+    "action": {"type": "string", "minLength": 1},
+    "result": {"type": "string", "minLength": 1},
+    "agent": {"type": "string", "minLength": 1},
+    "served_model": {"type": ["string", "null"]},
+    "vendor": {"type": ["string", "null"]},
+    "model_id_source": {"enum": ["cli_metadata", "router_log", "unknown", null]},
+    "sha": {"type": ["string", "null"]},
+    "task_id": {"type": ["string", "null"]},
+    "attempt": {"type": ["integer", "null"], "minimum": 1},
+    "pr": {"type": ["integer", "null"], "minimum": 1},
+    "dedup_key": {"type": ["string", "null"], "description": "Replay cùng event không ghi thêm bản ghi."},
+    "detail": {"type": "object"}
+  }
+}
