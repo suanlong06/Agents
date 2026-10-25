@@ -1,0 +1,24 @@
+# Bảng alias -> (model_id, vendor) (PR-2, R11).
+# - `models`: model_id chuẩn và vendor. Mỗi model_id tự là alias của chính nó.
+# - `aliases`: chuỗi xuất hiện trong metadata CLI hoặc log 9Router -> model_id chuẩn.
+# - So khớp sau khi casefold. Một alias trỏ tới hai đích khác nhau, hoặc khóa YAML
+#   lặp, là LỖI khi nạp. Alias không có trong bảng thì model là "không rõ" và bị
+#   coi là xung đột ở Gate 3.
+# - Alias 9Router dưới đây là GIẢ ĐỊNH, phải đối chiếu log 9Router thật. Không thêm
+#   alias kiểu "latest" trỏ tới model thay đổi theo thời gian.
+schema_version: 1
+
+models:
+  claude-opus-5-5: {vendor: anthropic}
+  claude-sonnet-5-5: {vendor: anthropic}
+  deepseek-v4.1-flash-1017: {vendor: deepseek}
+  gemini-3.8-flash-medium: {vendor: google}
+  gemini-4-argon-medium: {vendor: google}
+
+aliases:
+  "claude-opus-5-5[1m]": claude-opus-5-5
+  "claude-sonnet-5-5[1m]": claude-sonnet-5-5
+  "xh/deepseek-v4.1-flash-1017": deepseek-v4.1-flash-1017
+  "deepseek/deepseek-v4.1-flash-1017": deepseek-v4.1-flash-1017
+  "google/gemini-3.8-flash-medium": gemini-3.8-flash-medium
+  "google/gemini-4-argon-medium": gemini-4-argon-medium

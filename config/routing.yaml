@@ -1,0 +1,77 @@
+# Định tuyến model (PR-2, SPEC mục 4, R11).
+# Validate bởi adapters/router.py theo ALLOWLIST adapter trong code: claude, dsh, agy.
+# Adapter stub KHÔNG BAO GIỜ có mặt trong file này (kể cả trong comment); router từ
+# chối file nhắc tới chúng.
+#
+# - Fallback CHỈ trong chuỗi Opus (route "hard"). dsh và agy đúng một bước: sập thì
+#   task vào `blocked` và thông báo qua Muse, không fallback sang tuyến khác.
+# - MỌI CON SỐ là MẶC ĐỊNH TẠM (R16), chỉnh theo dữ liệu thật.
+# - Tham số CLI, biến môi trường mang request id và định dạng log 9Router là GIẢ ĐỊNH,
+#   phải đối chiếu với bản cài thật. Sai giả định thì model phục vụ là "không rõ"
+#   (fail-closed ở Gate 3), không bao giờ đoán từ stdout.
+schema_version: 1
+
+routes:
+  hard:        # Khó, ảnh hưởng cao: Claude Code native
+    adapter: claude
+    chain:
+      - {model: claude-opus-5-5, effort: high}
+      - {model: claude-opus-5-5, effort: low}
+      - {model: claude-sonnet-5-5, effort: high}
+  medium:      # Trung bình: DeepSeek harness qua 9Router
+    adapter: dsh
+    chain:
+      - {model: deepseek-v4.1-flash-1017}
+  easy:        # Dễ, nhiều token, thông tin nhiễu: Antigravity qua bridge :20129 -> 9Router :20128
+    adapter: agy
+    chain:
+      - {model: gemini-3.8-flash-medium}
+
+adapters:
+  claude:
+    # Prompt luôn đi qua stdin, không bao giờ lên dòng lệnh. Chỉ dùng {model}, {effort}.
+    command: [claude, -p, --output-format, json, --model, "{model}", --effort, "{effort}"]
+    call_timeout_s: 1800     # timeout mỗi lời gọi
+    probe_timeout_s: 60      # CLI cần khởi động, nên dài hơn probe 9Router
+    usage: delta             # JSON của `claude -p` báo usage của riêng lời gọi đó
+  dsh:
+    # {model} bắt buộc: model chọn theo độ khó phải tới được CLI (SPEC mục 4).
+    command: [dsh, --profile, headless, --model, "{model}"]
+    call_timeout_s: 1800
+    probe_timeout_s: 2       # SPEC mục 8: probe completion thật, timeout 2 giây
+    usage: cumulative        # dsh báo usage cộng dồn theo phiên -> đổi ra delta
+    request_id_env: [NINEROUTER_REQUEST_ID]
+    request_id_header: X-Request-Id
+    probe_url: "http://127.0.0.1:20128/v1/chat/completions"
+    # 9Router/bridge có khóa: probe gửi "Authorization: Bearer <giá trị biến này>".
+    # Chỉ ghi TÊN biến môi trường, không bao giờ ghi khóa. Tên biến là GIẢ ĐỊNH.
+    api_key_env: NINEROUTER_API_KEY
+  agy:
+    command: [agy, -p, --output-format, json, --model, "{model}"]
+    call_timeout_s: 1800
+    probe_timeout_s: 2
+    tokens_reported: false   # agy không báo token -> ước lượng, estimated = true
+    request_id_env: [NINEROUTER_REQUEST_ID]
+    request_id_header: X-Request-Id
+    probe_url: "http://127.0.0.1:20129/v1/chat/completions"
+    # 9Router/bridge có khóa: probe gửi "Authorization: Bearer <giá trị biến này>".
+    # Chỉ ghi TÊN biến môi trường, không bao giờ ghi khóa. Tên biến là GIẢ ĐỊNH.
+    api_key_env: NINEROUTER_API_KEY
+
+# Mở sau 3 lỗi liên tiếp, giữ 5 phút (SPEC mục 8). Breaker riêng cho từng model.
+circuit_breaker:
+  failure_threshold: 3
+  reset_after_s: 300
+
+probe:
+  prompt: "Reply with exactly: OK"
+  task_id: probe             # ledger ghi probe dưới task_id này
+
+# Log 9Router (JSONL) để join model thực sự phục vụ theo request id. GIẢ ĐỊNH.
+router_log:
+  path: "%APPDATA%\\9router\\logs\\requests.jsonl"
+  request_id_field: request_id
+  model_field: model
+  input_tokens_field: usage.prompt_tokens
+  output_tokens_field: usage.completion_tokens
+  wait_s: 2

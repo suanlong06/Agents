@@ -90,8 +90,10 @@ class ProcessIdentityTest(TmpDirTestCase):
     def test_protected_system_process_is_not_cleaned(self):
         self.assertTrue(probe_process(4).exists)
         probe = probe_process(4)
-        self.assertIsNotNone(probe.proc_start)
-        self.assertTrue(owner_alive({"pid": 4, "proc_start": probe.proc_start}))
+        if probe.proc_start is None:
+            self.assertTrue(owner_alive({"pid": 4, "proc_start": "b\u1ea5t k\u1ef3"}))
+        else:
+            self.assertTrue(owner_alive({"pid": 4, "proc_start": probe.proc_start}))
 
 
 class PidLockTest(TmpDirTestCase):

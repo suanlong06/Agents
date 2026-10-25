@@ -147,6 +147,61 @@ class FoldOnceTest(InboxTestCase):
         self.assertEqual((res.applied, res.duplicates), (2, 0))
         self.assertEqual(len(orch.snapshot["offsets"]), 2)
 
+    def test_later_process_file_sorting_first_waits_for_its_prerequisite(self):
+        # Thứ tự trên CI: inbox đầu pid 888, process sau pid 777 → file events-777-* xếp
+        # trước events-888-*, nên spec_review được đọc trước spec_draft.
+        first = AgentInbox(self.state_dir, "implementer", model_id="m",
+                           identity=ProcessIdentity(888, "2026-10-26T00:00:00.0000000Z"))
+        first.emit("task_created", "T-1")
+        orch = self.open_inbox_orch()
+        self.assertEqual(orch.fold_inboxes().applied, 1)
+        first.emit("transition", "T-1", {"to": "spec_draft"})
+        later = AgentInbox(self.state_dir, "implementer", model_id="m",
+                           identity=ProcessIdentity(777, "2026-10-26T01:00:00.0000000Z"))
+        later.emit("transition", "T-1", {"to": "spec_review"})
+        self.assertLess(later.events_path.name, first.events_path.name)
+
+        res = orch.fold_inboxes()
+        self.assertEqual((res.applied, res.duplicates, res.rejected), (2, 0, 0))
+        self.assertEqual(orch.snapshot["tasks"]["T-1"]["state"], "spec_review")
+        self.assertEqual(len(orch.snapshot["offsets"]), 2)
+        # Lần thử bị hoãn không ghi audit: mỗi event đúng một bản ghi, đều "applied".
+        recs = [r for r in AuditLog.read(orch.audit.path) if (r["dedup_key"] or "").startswith("event:")]
+        self.assertEqual(Counter(r["dedup_key"] for r in recs), Counter({k: 1 for k in self.event_audit(orch)}))
+        self.assertEqual(len(recs), 3)
+        self.assertEqual({r["result"] for r in recs}, {"applied"})
+
+        self.assertEqual(orch.fold_inboxes().applied, 0)
+        orch = self.reopen(orch)
+        res = orch.fold_inboxes()
+        self.assertEqual((res.applied, res.duplicates, res.rejected), (0, 0, 0))
+
+    def test_unsatisfiable_event_is_rejected_once_after_passes_and_keeps_source_order(self):
+        first = AgentInbox(self.state_dir, "implementer", model_id="m",
+                           identity=ProcessIdentity(888, "2026-10-26T00:00:00.0000000Z"))
+        first.emit("task_created", "T-1")
+        later = AgentInbox(self.state_dir, "implementer", model_id="m",
+                           identity=ProcessIdentity(777, "2026-10-26T01:00:00.0000000Z"))
+        later.emit("transition", "T-1", {"to": "approved_merge"})  # không bao giờ hợp lệ ở đây
+        later.emit("transition", "T-1", {"to": "spec_draft"})
+
+        orch = self.open_inbox_orch()
+        res = orch.fold_inboxes()
+        # approved_merge bị hoãn rồi từ chối đúng một lần; spec_draft (sau nó trong cùng
+        # nguồn) chờ tới khi nó được giải quyết rồi mới áp.
+        self.assertEqual((res.applied, res.duplicates, res.rejected), (2, 0, 1))
+        self.assertEqual(orch.snapshot["tasks"]["T-1"]["state"], "spec_draft")
+        key = f"implementer|777|{later.identity.proc_start}"
+        self.assertEqual(orch.snapshot["watermarks"][key], 2)
+        results = Counter(r["result"] for r in AuditLog.read(orch.audit.path)
+                          if (r["dedup_key"] or "").startswith("event:"))
+        self.assertEqual(results, Counter({"applied": 2, "rejected": 1}))
+        self.assertEqual(max(self.event_audit(orch).values()), 1)
+
+        orch = self.reopen(orch)
+        res = orch.fold_inboxes()
+        self.assertEqual((res.applied, res.duplicates, res.rejected), (0, 0, 0))
+
 
 class ProvenanceTest(InboxTestCase):
     def test_event_claiming_another_agent_is_quarantined(self):
