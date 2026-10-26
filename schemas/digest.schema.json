@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/digest.schema.json",
+  "title": "Digest v1 (danh sách đóng băng của một cửa sổ batch)",
+  "description": "PR-4b. Digest 11:30 / 16:30 (KST, mặc định tạm) ĐÓNG BĂNG danh sách PR của cửa sổ: ghi một lần vào `<state_dir>/digests/<window_id>.json` (ngoài repo, R13), không bao giờ ghi lại. Batch của cửa sổ chỉ xét PR trong danh sách này, và chỉ merge PR có phê duyệt của người dùng trên GitHub gắn (head SHA, patch-id) nộp trước hạn duyệt. Digest KHÔNG phải bản ghi duyệt. Best-effort, không chống giả mạo (R15). Trường lạ được bỏ qua để tương thích N-1/N+1.",
+  "type": "object",
+  "required": ["v", "window_id", "frozen_at", "cutoff", "batch_at", "repo", "base_branch", "base_sha", "entries", "excluded"],
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "window_id": {"type": "string", "pattern": "^[0-9]{8}-[0-9]{4}$"},
+    "frozen_at": {"type": "string", "minLength": 1, "description": "KST."},
+    "cutoff": {"type": "string", "minLength": 1, "description": "Hạn duyệt (KST): review nộp sau mốc này không vào batch của cửa sổ."},
+    "batch_at": {"type": "string", "minLength": 1},
+    "repo": {"type": "string", "minLength": 3},
+    "base_branch": {"type": "string", "minLength": 1},
+    "base_sha": {"$ref": "#/$defs/sha"},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pr", "title", "author", "html_url", "head_sha", "merge_base", "patch_id", "tier", "ci", "batch_eligible", "reasons"],
+        "properties": {
+          "pr": {"type": "integer", "minimum": 1},
+          "title": {"type": "string"},
+          "author": {"type": ["string", "null"]},
+          "html_url": {"type": ["string", "null"]},
+          "head_sha": {"$ref": "#/$defs/sha"},
+          "merge_base": {"$ref": "#/$defs/sha"},
+          "patch_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
+          "tier": {"enum": ["green", "red", "owner-only"]},
+          "label_id": {"type": ["string", "null"]},
+          "ci": {"enum": ["success", "failure", "pending", "missing"]},
+          "batch_eligible": {"type": "boolean", "description": "true chỉ khi CI xanh trên head, không Owner-only và có patch-id. Vẫn CẦN phê duyệt của người dùng trước hạn."},
+          "reasons": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pr", "reason"],
+        "properties": {"pr": {"type": "integer", "minimum": 1}, "reason": {"type": "string"}}
+      }
+    }
+  },
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+  }
+}

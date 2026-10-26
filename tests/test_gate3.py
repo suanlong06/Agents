@@ -37,6 +37,7 @@ from pipeline.gate3 import (
 )
 from pipeline.labeler import Change, SensitivePaths, label_changes
 from tests.helpers import make_config
+from tests.killswitch_fixtures import OpenKillSwitch
 
 ALIASES = ModelAliases.load(REPO_ROOT / "config" / "model_aliases.yaml")
 CFG = SensitivePaths.parse((REPO_ROOT / "config" / "sensitive_paths.yaml").read_bytes())
@@ -85,9 +86,9 @@ def row(model, *, task="T-1", attempt=1, agent="implementer", source="cli_metada
 class FakeReviewer(Adapter):
     """Adapter giả: phục vụ đúng model được yêu cầu (hoặc ``serve``), output tùy kịch bản."""
 
-    def __init__(self, name, *, output=PASS_OUT, serve=None, source=None, down=False, sink=None):
+    def __init__(self, name, *, output=PASS_OUT, serve=None, source=None, down=False, sink=None, killswitch=None):
         self.name = name
-        super().__init__(aliases=ALIASES, ledger=sink)
+        super().__init__(aliases=ALIASES, ledger=sink, killswitch=killswitch or OpenKillSwitch())
         self.output, self.serve, self.down = output, serve, down
         self.source = source or ("cli_metadata" if name == "claude" else "router_log")
         self.calls = []
@@ -119,7 +120,7 @@ class Base(unittest.TestCase):
     def make(self, *models, output=PASS_OUT, green_rule="model", events=None, **adapter_kw):
         self.adapters = {n: FakeReviewer(n, output=output, **adapter_kw.get(n, {})) for n in ("claude", "dsh", "agy")}
         return Gate3(aliases=ALIASES, adapters=self.adapters, settings=settings(*models, green_rule=green_rule),
-                     events=events, clock=lambda: "2026-10-26T10:00:00.000+09:00")
+                     events=events, killswitch=OpenKillSwitch(), clock=lambda: "2026-10-26T10:00:00.000+09:00")
 
     def review(self, g, rows, *, lbl=None, diff=DIFF, sha=SHA):
         return g.review(task_id="T-1", attempt=1, sha=sha, label=lbl or label(), diff=diff, ledger_records=rows, pr=7)
@@ -379,7 +380,7 @@ class PromptTest(unittest.TestCase):
                 return super()._invoke(request, timeout_s=timeout_s, probe=probe)
 
         adapters = {"dsh": Spy("dsh"), "claude": FakeReviewer("claude")}
-        g = Gate3(aliases=ALIASES, adapters=adapters, settings=settings(DEEPSEEK, OPUS),
+        g = Gate3(aliases=ALIASES, adapters=adapters, settings=settings(DEEPSEEK, OPUS), killswitch=OpenKillSwitch(),
                   nonce_factory=lambda: next(nonces))
         g.review(task_id="T-1", attempt=1, sha=SHA, label=label(), diff=DIFF, ledger_records=[row(OPUS)])
         self.assertIn("BEGIN UNTRUSTED DATA zz9", seen[0])
@@ -407,15 +408,15 @@ class ConfigAndWiringTest(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         with self.assertRaises(Gate3Error):
-            Gate3(aliases=ALIASES, adapters={"dsh": CodexStub()}, settings=settings(DEEPSEEK))
+            Gate3(aliases=ALIASES, adapters={"dsh": CodexStub()}, settings=settings(DEEPSEEK), killswitch=OpenKillSwitch())
         with self.assertRaises(Gate3Error):
             Gate3(aliases=ALIASES, adapters={}, settings=Gate3Settings(
-                candidates=(ReviewerCandidate("dsh", "model-khong-co"),)))
+                candidates=(ReviewerCandidate("dsh", "model-khong-co"),)), killswitch=OpenKillSwitch())
 
     def test_review_call_lands_in_ledger_and_is_excluded_from_later_writer_sets(self):
         sink = ListSink()
         adapters = {"dsh": FakeReviewer("dsh", sink=sink), "claude": FakeReviewer("claude", sink=sink)}
-        g = Gate3(aliases=ALIASES, adapters=adapters, settings=settings(DEEPSEEK, OPUS))
+        g = Gate3(aliases=ALIASES, adapters=adapters, settings=settings(DEEPSEEK, OPUS), killswitch=OpenKillSwitch())
         rows = [row(OPUS)]
         g.review(task_id="T-1", attempt=1, sha=SHA, label=label(), diff=DIFF, ledger_records=rows)
         (rec,) = sink.rows
@@ -456,7 +457,7 @@ class FoldIntegrationTest(unittest.TestCase):
         with InboxOrchestrator(self.config) as orch:
             orch.fold_inboxes()
             g = Gate3(aliases=ALIASES, adapters={n: FakeReviewer(n) for n in ("dsh", "claude", "agy")},
-                      settings=settings(), events=self.g3)
+                      settings=settings(), events=self.g3, killswitch=OpenKillSwitch())
             out = g.review(task_id="T-1", attempt=1, sha=SHA, label=label(), diff=DIFF,
                            ledger_records=orch.ledger.records(), pr=7)
             self.assertEqual(out.verdict["reviewer"]["model_id"], DEEPSEEK)

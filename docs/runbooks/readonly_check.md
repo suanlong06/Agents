@@ -43,15 +43,22 @@ tính là thao tác ghi của phần được kiểm). Bốn probe, tất cả p
 | `health` | `state.json` có, đọc được, đúng schema; `heartbeats.json` có và orchestrator không ở `error`. "Không có dữ liệu" là **không đạt**, khác với "0" |
 | `log_errors` | số bản ghi audit có `result` ∈ {`error`, `rejected`} với `seq` > `since_seq` ≤ `readonly_check.max_new_errors` (mặc định tạm 0, R16) |
 
+| `release_tag` | (PR-4b, F2) checkout chứa module đang chạy là **đúng tag release**: `git describe --tags --exact-match --match <tag> HEAD` == `<tag>` và `git diff --quiet HEAD` (không có thay đổi tracked) |
+
 `ok` = mọi probe đạt **và** `readonly_ok` (chính bước kiểm không ghi gì).
+
+Batch release tự động (PR-4b, `docs/runbooks/batch.md`) chạy lệnh này với `--release-lock-held`:
+probe `release_lock_held` (batch đang giữ `release.lock` với `purpose: batch_release`, chủ lock còn
+sống) thay cho `killswitch_engaged`, vì runner không ghi được kill-switch; batch giữ lock và
+`WriterGuard` suốt bước kiểm tra nên không writer nào khác chạy.
 
 ## Cách chạy
 
 ```powershell
 # Trước khi đổi tag (release.md bước 3):
 python -m release.readonly_check seq
-# Sau khi đổi tag, kill-switch vẫn bật:
-python -m release.readonly_check run --since-seq <seq>
+# Sau khi đổi tag, kill-switch vẫn bật, TỪ runtime checkout tại tag (--expect-tag bắt buộc):
+python -m release.readonly_check run --since-seq <seq> --expect-tag <tag>
 ```
 
 Exit code: `0` = đạt, `1` = không đạt. Lưu báo cáo JSON vào incident nếu không đạt.

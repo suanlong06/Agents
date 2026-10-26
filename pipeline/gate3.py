@@ -275,7 +275,7 @@ class Gate3:
                  events=None, timezone: str = "Asia/Seoul", clock: Callable[[], str] | None = None,
                  nonce_factory: Callable[[], str] = lambda: secrets.token_hex(16),
                  call_id_factory: Callable[[], str] = lambda: secrets.token_hex(6),
-                 fingerprint_window: int = DEFAULT_LINE_WINDOW, killswitch=None):
+                 fingerprint_window: int = DEFAULT_LINE_WINDOW, killswitch):
         if not settings.candidates:
             raise Gate3Error("gate3.candidates rỗng: không có reviewer nào")
         for c in settings.candidates:
@@ -295,6 +295,9 @@ class Gate3:
         self._call_id = call_id_factory
         self.fingerprint_window = fingerprint_window
         # PR-4a: kill-switch bật → review dừng trước mọi lời gọi model và mọi event.
+        # PR-4b (F1): BẮT BUỘC, không có mặc định "không kiểm" (fail-closed).
+        if killswitch is None or not callable(getattr(killswitch, "check", None)):
+            raise Gate3Error("Gate3 cần kill-switch có check(action) (F1, fail-closed)")
         self.killswitch = killswitch
 
     # --- chọn reviewer ---
@@ -316,8 +319,7 @@ class Gate3:
 
     def review(self, *, task_id: str, attempt: int, sha: str, label: Label, diff: str,
                ledger_records: Iterable[Mapping], pr: int | None = None) -> Gate3Outcome:
-        if self.killswitch is not None:
-            self.killswitch.check("gate3.review")
+        self.killswitch.check("gate3.review")
         check_task_id(task_id, self.probe_task_id)
         base = dict(task_id=task_id, attempt=attempt, pr=pr, sha=sha, label=label)
         writers = self.writer_set(list(ledger_records), task_id)

@@ -10,6 +10,7 @@ from orchestrator.fsio import NotWriter, WriterGuard
 from pipeline import common
 from pipeline.approvals import ApprovalMirror, decide_approval, github_approval
 from pipeline.github_api import GitHubClient
+from tests.killswitch_fixtures import OpenKillSwitch
 
 SHA = "1" * 40
 OLD = "2" * 40
@@ -95,7 +96,8 @@ class MirrorTest(unittest.TestCase):
 
     def mirror(self):
         return ApprovalMirror(self.state_dir, self.guard, self.client, owner_logins=OWNER,
-                              clock=lambda: "2026-10-26T20:00:00.000+09:00")
+                              clock=lambda: "2026-10-26T20:00:00.000+09:00",
+                              killswitch=OpenKillSwitch())
 
     def test_mirrors_owner_reviews_idempotently(self):
         self.gh.reviews = [review(1, "APPROVED"), review(2, "APPROVED", login="harness-bot"),

@@ -2,6 +2,8 @@
 
 > MVP: **không có merge tự động, không có batch release tự động** (PR-4b). Người dùng làm
 > mọi bước dưới đây bằng tay. Mốc giờ theo Asia/Seoul (KST). `R<n>` là quy tắc ở SPEC mục 5.3.
+> PR-4b thêm batch release tự động (`docs/runbooks/batch.md`) nhưng **chưa kích hoạt**; runbook
+> thủ công này vẫn là đường release cho tới khi người dùng kích hoạt. Auto-merge vẫn TẮT.
 
 ## "Release" là gì với control plane cục bộ (SPEC mục 8 câu 14)
 
@@ -77,10 +79,15 @@ Phanh khẩn cấp: xóa file (`Remove-Item $ks`) cũng là BẬT.
    git -C <runtime-checkout> switch --detach rel-YYYYMMDD-HHMM
    ```
 
-7. **Kiểm tra read-only** (bước 11, `docs/runbooks/readonly_check.md`), kill-switch vẫn bật:
+7. **Kiểm tra read-only** (bước 11, `docs/runbooks/readonly_check.md`), kill-switch vẫn bật.
+   Chạy **từ runtime checkout** (thư mục hiện tại PHẢI là runtime checkout vừa chuyển sang tag ở
+   bước 6), để code được kiểm là code của tag release chứ không phải checkout nào khác. Lệnh tự khẳng
+   định điều đó: `--expect-tag` là bắt buộc và probe `release_tag` chỉ đạt khi
+   `git describe --tags --exact-match` của checkout chứa module == tag và không có thay đổi tracked:
 
    ```powershell
-   python -m release.readonly_check run --since-seq <seq ở bước 3>
+   Set-Location <runtime-checkout>
+   python -m release.readonly_check run --since-seq <seq ở bước 3> --expect-tag rel-YYYYMMDD-HHMM
    ```
 
    - **Đạt** (exit 0, `"ok": true`): người dùng **tắt kill-switch**. Xong.

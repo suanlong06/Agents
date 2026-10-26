@@ -223,7 +223,7 @@ def build_router_log(routing: RoutingConfig):
 
 
 def build_adapters(routing: RoutingConfig, aliases: ModelAliases, *, prices=None, ledger=None,
-                   runner=None, http=None, router_log=None, clock=None, killswitch=None) -> dict[str, Adapter]:
+                   runner=None, http=None, router_log=None, clock=None, killswitch) -> dict[str, Adapter]:
     """Dựng adapter cho mọi tên trong allowlist có cấu hình. Không bao giờ dựng stub."""
     reg = _registry()
     if router_log is None:
