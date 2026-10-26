@@ -28,6 +28,7 @@ from orchestrator.ledger import Ledger
 from orchestrator.lock import ProcessIdentity
 from tests.adapter_fakes import RID_ENV, FakeRouter9, FakeRunner, claude_json, opus_usage, timeout
 from tests.helpers import StateDirTestCase
+from tests.killswitch_fixtures import OpenKillSwitch
 
 ALIASES = ModelAliases.load(DEFAULT_ALIASES_PATH)
 ROUTER_ID = ProcessIdentity(7001, "2026-10-26T00:00:00.0000000Z")
@@ -138,7 +139,7 @@ class RoutingConfigValidationTest(unittest.TestCase):
     def test_non_loopback_probe_url_fails_when_building(self):
         cfg = self.validate(self.mutate(lambda d: d["adapters"]["agy"].update(probe_url="http://example.com/v1")))
         with self.assertRaises(ConfigError):
-            build_adapters(cfg, ALIASES, runner=FakeRunner())
+            build_adapters(cfg, ALIASES, runner=FakeRunner(), killswitch=OpenKillSwitch())
 
 
 class RouterTestCase(StateDirTestCase):
@@ -154,7 +155,8 @@ class RouterTestCase(StateDirTestCase):
 
     def make_router(self, claude_script=(), dsh_script=(), agy_script=()):
         sink = InboxLedgerSink(self.agent_inbox)
-        common = dict(aliases=ALIASES, ledger=sink, breaker_policy=self.routing.breaker)
+        common = dict(aliases=ALIASES, ledger=sink, breaker_policy=self.routing.breaker,
+                      killswitch=OpenKillSwitch())
         adapters = {
             "claude": ClaudeAdapter(runner=FakeRunner(*claude_script), **common),
             "dsh": DshAdapter(runner=FakeRunner(*dsh_script), router_log=self.r9.log,
@@ -320,7 +322,8 @@ class DshAgyHaveNoFallbackTest(RouterTestCase):
     def test_repo_routing_builds_probe_auth_from_environment_variable_name(self):
         for name in ("dsh", "agy"):
             self.assertEqual(self.routing.adapters[name]["api_key_env"], "NINEROUTER_API_KEY")
-        built = build_adapters(self.routing, ALIASES, runner=FakeRunner(), router_log=self.r9.log)
+        built = build_adapters(self.routing, ALIASES, runner=FakeRunner(), router_log=self.r9.log,
+                               killswitch=OpenKillSwitch())
         medium = CallRequest(task_id="T-1", attempt=1, call_id="c", prompt="p", model="deepseek-v4.1-flash-1017")
         self.assertEqual(model_of(built["dsh"].argv(medium)), "deepseek-v4.1-flash-1017")
         with mock.patch.dict("os.environ", {"NINEROUTER_API_KEY": "k-env"}):

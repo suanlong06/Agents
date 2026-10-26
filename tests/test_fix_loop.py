@@ -15,6 +15,7 @@ from pipeline.ci_status import CiStatus
 from pipeline.common import PipelineConfigError, task_cost_by_attempt
 from pipeline.fix_loop import FixLoop, FixLoopError, fingerprint
 from tests.helpers import make_config
+from tests.killswitch_fixtures import OpenKillSwitch
 
 SHA1, SHA2, SHA3 = "1" * 40, "2" * 40, "3" * 40
 NOW = "2026-10-26T10:00:00.000+09:00"
@@ -51,7 +52,7 @@ class FingerprintTest(unittest.TestCase):
             fingerprint("x", "t", 1, window=0)
 
     def test_fix_list_merges_duplicates_and_is_ordered(self):
-        loop = FixLoop(FixPolicy())
+        loop = FixLoop(FixPolicy(), killswitch=OpenKillSwitch())
         fl = loop.build_fix_list([finding(line=21), finding(line=4), finding(file="SRC/APP.PY", line=5),
                                   finding(type_="style", line=1)])
         self.assertEqual([(f["line_start"], f["type"], f["count"]) for f in fl],
@@ -60,18 +61,18 @@ class FingerprintTest(unittest.TestCase):
 
 class DecisionTest(unittest.TestCase):
     def test_first_failure_goes_to_awaiting_human(self):
-        d = FixLoop(FixPolicy(max_fix_rounds=2)).on_verdict(task_at(), verdict(), [cost_row(1, 1.0)])
+        d = FixLoop(FixPolicy(max_fix_rounds=2), killswitch=OpenKillSwitch()).on_verdict(task_at(), verdict(), [cost_row(1, 1.0)])
         self.assertEqual((d.state, d.fix_rounds, d.reason), ("awaiting-human", 1, None))
         self.assertEqual(len(d.fix_list), 1)
 
     def test_rounds_beyond_n_escalate(self):
-        d = FixLoop(FixPolicy(max_fix_rounds=2)).on_verdict(task_at(fix_rounds=2, attempt=3), verdict(),
+        d = FixLoop(FixPolicy(max_fix_rounds=2), killswitch=OpenKillSwitch()).on_verdict(task_at(fix_rounds=2, attempt=3), verdict(),
                                                             [cost_row(1, 1.0)])
         self.assertEqual((d.state, d.fix_rounds), ("escalated", 3))
         self.assertIn("N = 2", d.reason)
 
     def test_budget_is_cumulative_per_task_and_excludes_probe(self):
-        loop = FixLoop(FixPolicy(max_fix_rounds=5, budget_multiplier=3.0))
+        loop = FixLoop(FixPolicy(max_fix_rounds=5, budget_multiplier=3.0), killswitch=OpenKillSwitch())
         t = task_at(fix_rounds=1, attempt=2)
         rows = [cost_row(1, 1.0), cost_row(2, 1.5), cost_row(2, 1.4)]
         self.assertEqual(loop.on_verdict(t, verdict(), rows).state, "awaiting-human")
@@ -87,12 +88,12 @@ class DecisionTest(unittest.TestCase):
             task_cost_by_attempt(probes, "probe")
 
     def test_unpriced_fix_call_escalates_fail_closed(self):
-        loop = FixLoop(FixPolicy(max_fix_rounds=5))
+        loop = FixLoop(FixPolicy(max_fix_rounds=5), killswitch=OpenKillSwitch())
         d = loop.on_verdict(task_at(fix_rounds=1, attempt=2), verdict(), [cost_row(1, 1.0), cost_row(2, None)])
         self.assertEqual(d.state, "escalated")
 
     def test_recurring_findings_are_flagged(self):
-        loop = FixLoop(FixPolicy())
+        loop = FixLoop(FixPolicy(), killswitch=OpenKillSwitch())
         first = loop.on_verdict(task_at(), verdict(), [])
         again = loop.on_verdict(task_at(), verdict(findings=[finding(line=5), finding(file="b.py")]), [],
                                 previous_fingerprints=[f["fingerprint"] for f in first.fix_list])
@@ -100,17 +101,17 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual([(f["file"], f["recurring"]) for f in again.fix_list], [("b.py", False), ("src/app.py", True)])
 
     def test_rejects_non_fail_wrong_task_and_stale_sha(self):
-        loop = FixLoop(FixPolicy())
+        loop = FixLoop(FixPolicy(), killswitch=OpenKillSwitch())
         for bad in (verdict(v="pass"), verdict(v="escalated"), verdict(task_id="T-9"), verdict(sha=SHA2)):
             with self.subTest(verdict=bad), self.assertRaises(FixLoopError):
                 loop.on_verdict(task_at(), bad, [])
 
     def test_ci_failure_is_a_fix_round(self):
         ci = CiStatus(SHA1, "failure", "ci", 5, "failure", "https://github.com/x/y/runs/5")
-        d = FixLoop(FixPolicy()).on_ci_failure(task_at("ci_check"), ci, [])
+        d = FixLoop(FixPolicy(), killswitch=OpenKillSwitch()).on_ci_failure(task_at("ci_check"), ci, [])
         self.assertEqual((d.state, d.fix_list[0]["type"]), ("awaiting-human", "ci-failure"))
         with self.assertRaises(FixLoopError):
-            FixLoop(FixPolicy()).on_ci_failure(task_at("ci_check"), CiStatus(SHA1, "success", "ci"), [])
+            FixLoop(FixPolicy(), killswitch=OpenKillSwitch()).on_ci_failure(task_at("ci_check"), CiStatus(SHA1, "success", "ci"), [])
 
 
 class FixerIsStubTest(unittest.TestCase):
@@ -141,7 +142,7 @@ class FoldIntegrationTest(unittest.TestCase):
         self.fix_inbox = AgentInbox(self.state_dir, "fix-loop", model_id=None,
                                     identity=ProcessIdentity(202, "2026-10-26T09:00:01.000+09:00"))
         self.orch = InboxOrchestrator(self.config).open()
-        self.loop = FixLoop(self.config.fix, events=self.fix_inbox)
+        self.loop = FixLoop(self.config.fix, events=self.fix_inbox, killswitch=OpenKillSwitch())
 
     def tearDown(self):
         self.orch.close()

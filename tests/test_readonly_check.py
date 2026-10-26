@@ -331,12 +331,87 @@ class PostReleaseCheckTest(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 self.assertEqual(rc.main(["seq"]), 0)
             self.assertEqual(int(buf.getvalue()), self.since)
+            # F2: --expect-tag là BẮT BUỘC.
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                rc.main(["run", "--since-seq", str(self.since)])
+            # Checkout của repo test không phải tag release → không đạt.
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                code = rc.main(["run", "--since-seq", str(self.since)])
+                code = rc.main(["run", "--since-seq", str(self.since), "--expect-tag", "rel-khong-co"])
+            rep = json.loads(buf.getvalue())
+            self.assertEqual(code, 1, rep)
+            self.assertFalse(self.probe(rep, "release_tag")["passed"])
+            # Probe tag đạt (giả lập checkout đúng tag) → toàn bộ đạt; probe nhận đúng REPO_ROOT + tag.
+            seen = []
+
+            def tag_ok(root, tag):
+                seen.append((root, tag))
+                return rc.ProbeResult("release_tag", True, {"describe": tag})
+
+            buf = io.StringIO()
+            with mock.patch.object(rc, "probe_release_tag", tag_ok), contextlib.redirect_stdout(buf):
+                code = rc.main(["run", "--since-seq", str(self.since), "--expect-tag", "rel-20261026-1200"])
             rep = json.loads(buf.getvalue())
             self.assertEqual(code, 0, rep)
             self.assertTrue(rep["ok"])
+            self.assertEqual(seen, [(REPO_ROOT, "rel-20261026-1200")])
+
+    def test_release_lock_mode_requires_the_batch_lock_and_does_not_take_it(self):
+        write_killswitch(self.ks_path, "off")  # batch chạy khi kill-switch TẮT
+        rep = self.check(quiesce="release_lock")
+        self.assertFalse(rep["ok"])
+        self.assertEqual([p["name"] for p in rep["probes"]][0], "release_lock_held")
+        self.assertFalse((self.state_dir / "release.lock").exists())  # không tự lấy lock
+        with PidLock(self.state_dir / "release.lock", meta={"purpose": "readonly_check"}):
+            self.assertFalse(self.check(quiesce="release_lock")["ok"])  # sai purpose
+        with PidLock(self.state_dir / "release.lock", meta={"purpose": rc.BATCH_LOCK_PURPOSE}):
+            rep = self.check(quiesce="release_lock")
+            self.assertTrue(rep["ok"], json.dumps(rep, ensure_ascii=False, indent=1))
+            self.assertTrue((self.state_dir / "release.lock").exists())  # vẫn là lock của batch
+        with self.assertRaises(ReadOnlyCheckError):
+            self.check(quiesce="khac")
+
+
+class ReleaseTagProbeTest(Tmp):
+    """F2: kiểm tra read-only phải chạy trên checkout của ĐÚNG tag release."""
+
+    def git(self, *args):
+        proc = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                               "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-C", str(self.repo), *args],
+                              capture_output=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def setUp(self):
+        super().setUp()
+        self.repo = self.tmp / "checkout"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+        (self.repo / "a.txt").write_text("1\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "c1")
+        self.git("tag", "-a", "rel-20261026-1200", "-m", "release")
+        self.git("tag", "-a", "rel-khac", "-m", "tag khác cùng commit")
+
+    def test_exact_tag_checkout_passes(self):
+        res = rc.probe_release_tag(self.repo, "rel-20261026-1200")
+        self.assertTrue(res.passed, res.detail)
+        self.assertEqual(res.detail["describe"], "rel-20261026-1200")
+
+    def test_other_commit_dirty_tree_or_bad_name_fail(self):
+        (self.repo / "a.txt").write_text("2\n", encoding="utf-8")
+        res = rc.probe_release_tag(self.repo, "rel-20261026-1200")
+        self.assertFalse(res.passed)
+        self.assertTrue(res.detail["tracked_changes"])
+        self.git("commit", "-q", "-am", "c2")
+        self.assertFalse(rc.probe_release_tag(self.repo, "rel-20261026-1200").passed)
+        self.assertFalse(rc.probe_release_tag(self.repo, "rel-*").passed)
+        self.assertFalse(rc.probe_release_tag(self.tmp / "khong-phai-repo", "rel-20261026-1200").passed)
+
+    def test_probe_runs_git_inside_the_readonly_guard(self):
+        rep = verify_readonly(rc.probe_release_tag, self.repo, "rel-20261026-1200",
+                              allow_command=git_readonly_command, watch=[self.repo])
+        self.assertTrue(rep.ok, rep.to_dict())
+        self.assertTrue(rep.result.passed)
 
 
 if __name__ == "__main__":

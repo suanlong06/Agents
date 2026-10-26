@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/batch.schema.json",
+  "title": "Batch release report v1",
+  "description": "PR-4b. Báo cáo một lần batch release 12:00 / 17:00 (KST, mặc định tạm): `<state_dir>/batches/<window_id>.json` (ngoài repo, R13). `auto_merge` luôn là `disabled`: batch chỉ merge PR có phê duyệt của người dùng trên GitHub gắn (head SHA, patch-id) (`candidates`, `merged`). Best-effort, không chống giả mạo (R15). Trường lạ được bỏ qua để tương thích N-1/N+1.",
+  "type": "object",
+  "required": ["v", "window_id", "started_at", "finished_at", "status", "reason", "auto_merge", "merge_identity", "candidates", "skipped", "deferred", "integration", "merged", "tag", "prev_tag", "manifest_id", "release_check", "revert", "incident_id"],
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "window_id": {"type": "string", "pattern": "^[0-9]{8}-[0-9]{4}$"},
+    "started_at": {"type": "string", "minLength": 1},
+    "finished_at": {"type": ["string", "null"]},
+    "status": {"enum": ["running", "skipped", "nothing_to_release", "integration_ci_failed", "aborted_before_merge", "partial", "released", "release_check_failed", "stopped_killswitch", "failed"]},
+    "reason": {"type": ["string", "null"]},
+    "auto_merge": {"const": "disabled"},
+    "merge_identity": {"type": ["string", "null"]},
+    "candidates": {"type": "array", "items": {"$ref": "#/$defs/binding"}},
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pr", "reason"],
+        "properties": {"pr": {"type": "integer", "minimum": 1}, "reason": {"type": "string"}, "range_diff": {"type": "string"}}
+      }
+    },
+    "deferred": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+    "integration": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["branch", "base_sha", "head_sha", "pr", "ci", "steps"],
+          "properties": {
+            "branch": {"type": "string"},
+            "base_sha": {"$ref": "#/$defs/sha"},
+            "head_sha": {"$ref": "#/$defs/sha"},
+            "pr": {"type": ["integer", "null"]},
+            "ci": {"type": ["string", "null"]},
+            "steps": {"type": "array", "items": {"type": "object", "required": ["pr", "sha"]}}
+          }
+        }
+      ]
+    },
+    "merged": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pr", "merge_sha", "head_sha", "patch_id", "review_id", "reviewer"],
+        "properties": {
+          "pr": {"type": "integer", "minimum": 1},
+          "merge_sha": {"$ref": "#/$defs/sha"},
+          "head_sha": {"$ref": "#/$defs/sha"},
+          "patch_id": {"$ref": "#/$defs/sha"},
+          "review_id": {"type": "integer", "minimum": 1},
+          "reviewer": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "tag": {"type": ["string", "null"]},
+    "prev_tag": {"type": ["string", "null"]},
+    "manifest_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "release_check": {"type": ["object", "null"]},
+    "revert": {"type": ["object", "null"]},
+    "incident_id": {"type": ["string", "null"]}
+  },
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "binding": {
+      "type": "object",
+      "required": ["pr", "head_sha", "patch_id", "review_id", "reviewer", "submitted_at"],
+      "properties": {
+        "pr": {"type": "integer", "minimum": 1},
+        "head_sha": {"$ref": "#/$defs/sha"},
+        "patch_id": {"$ref": "#/$defs/sha"},
+        "review_id": {"type": "integer", "minimum": 1},
+        "reviewer": {"type": "string", "minLength": 1},
+        "submitted_at": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

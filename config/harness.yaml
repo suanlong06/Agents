@@ -80,3 +80,35 @@ shadow:
 # Kiểm tra read-only ở bước 11 (release/readonly_check.py, SPEC mục 8 câu 14).
 readonly_check:
   max_new_errors: 0        # số bản ghi audit lỗi mới tối đa sau release (mặc định tạm)
+
+# --- PR-4b ---
+# Lịch KST (release/schedule.py, release/runner.py). MỌI MỐC GIỜ LÀ MẶC ĐỊNH TẠM (R16).
+# enabled: false — PR-4b KHÔNG kích hoạt lịch chạy thật. Bật là quyết định riêng của người dùng
+# sau khi merge (docs/runbooks/batch.md). Runner chạy dưới OS user hiện tại: tách OS user + ACL
+# trên thư mục state vẫn là điều kiện triển khai còn mở trước mọi auto-merge hay ghi từ dashboard.
+scheduler:
+  enabled: false
+  tick_s: 30
+  grace_minutes: 10        # quá 10 phút sau mốc mà chưa chạy → lỡ cửa sổ: bỏ qua và thông báo
+  windows:
+    - {digest: "11:30", cutoff: "11:55", batch: "12:00"}
+    - {digest: "16:30", cutoff: "16:55", batch: "17:00"}
+
+# Batch release (release/batch.py). KHÔNG CÓ AUTO-MERGE: batch chỉ merge PR có review APPROVED
+# của người dùng trên GitHub gắn (head SHA, patch-id), nộp trước hạn duyệt (cutoff).
+batch:
+  max_prs: 5               # số PR tối đa mỗi batch (mặc định tạm, SPEC mục 8)
+  remote: origin
+  base_branch: main
+  workdir: "%LOCALAPPDATA%\\hw\\rel"   # clone làm việc riêng của batch, ngoài repo (người dùng tạo)
+  # Allowlist danh tính GitHub được merge trong batch. RỖNG = batch không merge gì (fail-closed).
+  # Danh tính merge phải khác tác giả PR. Token đọc từ biến môi trường, không bao giờ ghi vào file.
+  merge_identities: []
+  merge_token_env: HARNESS_MERGE_TOKEN
+  merge_method: merge
+  ci_timeout_minutes: 60   # chờ CI trên kết quả tích hợp (mặc định tạm)
+  ci_poll_s: 30
+  check_timeout_minutes: 15
+  integration_prefix: harness/batch/
+  revert_prefix: revert/
+  tag_prefix: rel-

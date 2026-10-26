@@ -41,3 +41,23 @@ class SpyKillSwitch:
 
     def status(self):
         return self.inner.status()
+
+
+class OpenKillSwitch:
+    """Kill-switch giả luôn TẮT, CHỈ cho test không nói về kill-switch.
+
+    Từ PR-4b (F1) ``killswitch`` là tham số BẮT BUỘC của Adapter, ``build_adapters``, Gate3,
+    FixLoop và ApprovalMirror: test phải truyền tường minh. Code của harness không có lớp
+    tương đương; runner luôn truyền ``KillSwitch`` thật (đọc file, fail-closed)."""
+
+    def __init__(self):
+        self.checks: list[str] = []
+
+    def status(self):
+        from orchestrator.killswitch import KillSwitchStatus
+
+        return KillSwitchStatus(False, "test: kill-switch giả luôn tắt", None)
+
+    def check(self, action: str):
+        self.checks.append(action)
+        return self.status()

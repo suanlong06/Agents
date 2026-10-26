@@ -60,7 +60,7 @@ class FixDecision:
 class FixLoop:
     def __init__(self, policy: FixPolicy, *, line_window: int = DEFAULT_LINE_WINDOW,
                  probe_task_id: str = DEFAULT_PROBE_TASK_ID, events=None,
-                 timezone: str = "Asia/Seoul", clock: Callable[[], str] | None = None, killswitch=None):
+                 timezone: str = "Asia/Seoul", clock: Callable[[], str] | None = None, killswitch):
         if policy.max_fix_rounds < 0 or policy.budget_multiplier < 0:
             raise FixLoopError("max_fix_rounds và budget_multiplier phải >= 0")
         self.policy = policy
@@ -71,11 +71,13 @@ class FixLoop:
         tz = ZoneInfo(timezone)
         self._clock = clock or (lambda: datetime.now(tz).isoformat(timespec="milliseconds"))
         # PR-4a: kill-switch bật → không ghi event vòng fix, không mở attempt mới.
+        # PR-4b (F1): BẮT BUỘC, không có mặc định "không kiểm" (fail-closed).
+        if killswitch is None or not callable(getattr(killswitch, "check", None)):
+            raise FixLoopError("FixLoop cần kill-switch có check(action) (F1, fail-closed)")
         self.killswitch = killswitch
 
     def _check_killswitch(self, action: str) -> None:
-        if self.killswitch is not None:
-            self.killswitch.check(action)
+        self.killswitch.check(action)
 
     def build_fix_list(self, findings: Iterable[Mapping]) -> list[dict]:
         """Gộp finding theo fingerprint (cửa sổ dòng của vòng fix), thứ tự ổn định."""
