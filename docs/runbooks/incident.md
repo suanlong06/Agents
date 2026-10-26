@@ -1,6 +1,9 @@
 # Runbook — Incident (PR-4a, R10)
 
 > MVP: incident mở và cập nhật **tay** bởi người dùng. Schema: `schemas/incident.schema.json`.
+> PR-4b: batch release tự động (khi được kích hoạt) cũng mở incident với `opened_by: "runner"`
+> (`release/incidents.py`). Incident `open`/`frozen` — hoặc file incident không đọc được — chặn mọi
+> batch. Chỉ người dùng chuyển incident sang `mitigated`/`resolved`.
 > Bản ghi nằm trong state (ngoài repo, R13), **best-effort, không chống giả mạo** (R15).
 
 ## Khi nào mở

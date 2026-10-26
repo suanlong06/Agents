@@ -2,6 +2,9 @@
 
 > MVP: revert làm **tay**. Revert tự động là PR-4b. Mọi thay đổi lên `main` đi **qua PR**,
 > người dùng merge qua GitHub UI (R7). **Không force-push, không reset.**
+> PR-4b (`release/auto_revert.py`, `docs/runbooks/batch.md`, chưa kích hoạt): khi kiểm tra sau batch
+> release không đạt, runner làm bước 2–7 dưới đây thay người (incident `opened_by: runner`, nhánh
+> `revert/<tag>`, mở PR revert) rồi DỪNG ở bước 8: chỉ người dùng duyệt và merge PR revert.
 
 ## Khi nào
 

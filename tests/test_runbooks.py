@@ -16,10 +16,33 @@ from orchestrator.killswitch import read_status
 from pipeline import common
 
 RUNBOOKS = REPO_ROOT / "docs" / "runbooks"
-NAMES = ("release.md", "readonly_check.md", "revert.md", "incident.md")
+NAMES = ("release.md", "readonly_check.md", "revert.md", "incident.md", "batch.md")
 FENCE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
 FORBIDDEN = re.compile(r"push\s+.*(--force|--force-with-lease|\s-f\b|\s\+\S)|reset\s+--hard|\btag\s+-d\b|"
                        r"push\s+.*--delete|\bgit\s+reset\b")
+
+
+def working_powershell(candidates=("pwsh", "powershell", "powershell.exe"), *, which=shutil.which,
+                       run=subprocess.run) -> str | None:
+    """PowerShell đầu tiên CHẠY ĐƯỢC (PR-4b, F3).
+
+    ``which("pwsh")`` có thể trỏ tới một stub hỏng (ví dụ alias App Execution trong
+    ``WindowsApps`` khi gói chưa cài xong): probe ``-Command`` một lệnh vô hại trước, stub
+    không chạy được thì thử ứng viên kế tiếp (``powershell.exe`` của Windows)."""
+    seen = set()
+    for name in candidates:
+        path = which(name)
+        if not path or os.path.normcase(path) in seen:
+            continue
+        seen.add(os.path.normcase(path))
+        try:
+            proc = run([path, "-NoProfile", "-NonInteractive", "-Command", "Write-Output probe-ok"],
+                       capture_output=True, stdin=subprocess.DEVNULL, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode == 0 and b"probe-ok" in (proc.stdout or b""):
+            return path
+    return None
 
 
 def blocks(name: str, lang: str | None = None) -> list[str]:
@@ -53,10 +76,50 @@ class RunbookTest(unittest.TestCase):
         for phrase in ("thứ tự ngược manifest", "git revert --abort", "Không force-push", "incident"):
             self.assertIn(phrase, revert)
 
+    def test_batch_runbook_states_no_auto_merge_and_the_os_user_prerequisite(self):
+        batch = " ".join((RUNBOOKS / "batch.md").read_text(encoding="utf-8").split())
+        for phrase in ("CHƯA KÍCH HOẠT", "Auto-merge vẫn TẮT", "OPEN DISCUSSION", "(head SHA, patch-id)",
+                       "OS user hiện tại", "điều kiện triển khai còn mở", "ACL trên thư mục state",
+                       "KHÔNG chống giả mạo", "không dùng merge queue native", "CI trên kết quả tích hợp",
+                       "bỏ qua và thông báo", "release.lock", "thứ tự **ngược** manifest",
+                       "chỉ người dùng duyệt và merge"):
+            self.assertIn(phrase, batch)
+
+    def test_release_step7_pins_the_check_to_the_released_tag(self):
+        # F2: lệnh kiểm tra ở runbook phải có --expect-tag và chạy từ runtime checkout.
+        cmds = [l.strip() for b in blocks("release.md", "powershell") + blocks("readonly_check.md", "powershell")
+                for l in b.splitlines() if "readonly_check run" in l]
+        self.assertTrue(cmds)
+        for c in cmds:
+            self.assertIn("--expect-tag", c)
+        self.assertIn("Set-Location <runtime-checkout>", "\n".join(blocks("release.md", "powershell")))
+
+    def test_broken_pwsh_stub_falls_back_to_windows_powershell(self):
+        # F3: pwsh trỏ tới stub hỏng (exit khác 0 / không chạy được) → thử powershell.exe.
+        paths = {"pwsh": r"C:\Users\u\AppData\Local\Microsoft\WindowsApps\pwsh.exe",
+                 "powershell": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"}
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv[0])
+            if argv[0] == paths["pwsh"]:
+                return subprocess.CompletedProcess(argv, 9009, b"", b"stub")
+            self.assertEqual(argv[1:4], ["-NoProfile", "-NonInteractive", "-Command"])
+            return subprocess.CompletedProcess(argv, 0, b"probe-ok\r\n", b"")
+
+        self.assertEqual(working_powershell(which=paths.get, run=run), paths["powershell"])
+        self.assertEqual(calls, [paths["pwsh"], paths["powershell"]])
+
+        def run_oserror(argv, **kw):
+            raise OSError("stub không chạy được")
+
+        self.assertIsNone(working_powershell(which=paths.get, run=run_oserror))
+        self.assertIsNone(working_powershell(which=lambda _n: None, run=run))
+
     def test_powershell_killswitch_commands_work_with_the_fail_closed_reader(self):
-        shell = shutil.which("pwsh") or shutil.which("powershell")
+        shell = working_powershell()
         if shell is None:
-            self.skipTest("không có PowerShell")
+            self.skipTest("không có PowerShell chạy được (pwsh/powershell.exe)")
         (ps,) = blocks("release.md", "powershell")[:1]
         lines = [l for l in ps.splitlines() if l.strip() and not l.lstrip().startswith("#")]
         setup = [l for l in lines if l.startswith(("$ks =", "New-Item"))]

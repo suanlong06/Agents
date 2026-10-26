@@ -35,6 +35,7 @@ from orchestrator.inbox import AgentInbox, InboxOrchestrator
 from orchestrator.ledger import Ledger, PriceTable
 from tests.adapter_fakes import ALIASES, RID_ENV, FakeRouter9, FakeRunner, claude_json, opus_usage, timeout
 from tests.helpers import PRICES_FIXTURE, StateDirTestCase
+from tests.killswitch_fixtures import OpenKillSwitch
 
 PRICES = PriceTable.load(REPO_ROOT / PRICES_FIXTURE)
 R5_FIELDS = ("task_id", "attempt", "agent", "call_id", "requested_model", "served_model", "vendor",
@@ -67,17 +68,20 @@ class AdapterTestCase(StateDirTestCase):
     def claude(self, *script, **kw):
         kw.setdefault("ledger", self.sink)
         kw.setdefault("aliases", ALIASES)
+        kw.setdefault("killswitch", OpenKillSwitch())
         return ClaudeAdapter(prices=PRICES, runner=FakeRunner(*script), clock=self.clock, **kw)
 
     def dsh(self, *script, **kw):
         kw.setdefault("ledger", self.sink)
         kw.setdefault("aliases", ALIASES)
+        kw.setdefault("killswitch", OpenKillSwitch())
         return DshAdapter(prices=PRICES, runner=FakeRunner(*script), router_log=self.r9.log,
                           request_id_env=(RID_ENV,), clock=self.clock, **kw)
 
     def agy(self, *script, **kw):
         kw.setdefault("ledger", self.sink)
         kw.setdefault("aliases", ALIASES)
+        kw.setdefault("killswitch", OpenKillSwitch())
         return AntigravityAdapter(prices=PRICES, runner=FakeRunner(*script),
                                   router_log=self.r9.log, request_id_env=(RID_ENV,), clock=self.clock, **kw)
 
@@ -347,7 +351,8 @@ class TimeoutBreakerProbeTest(AdapterTestCase):
                 self.calls = getattr(self, "calls", 0) + 1
                 raise NotAvailable("không có")
 
-        adapter = Gone(aliases=ALIASES, runner=FakeRunner(), breaker_policy=BreakerPolicy(1, 300))
+        adapter = Gone(aliases=ALIASES, runner=FakeRunner(), breaker_policy=BreakerPolicy(1, 300),
+                       killswitch=OpenKillSwitch())
         for _ in range(3):
             with self.assertRaises(NotAvailable):
                 adapter.run(req())
@@ -455,25 +460,25 @@ class CostTest(AdapterTestCase):
 
 class CommandTemplateTest(unittest.TestCase):
     def test_prompt_never_on_command_line(self):
-        adapter = ClaudeAdapter(aliases=ALIASES, runner=FakeRunner())
+        adapter = ClaudeAdapter(aliases=ALIASES, runner=FakeRunner(), killswitch=OpenKillSwitch())
         argv = adapter.argv(req(prompt="rm -rf & calc.exe"))
         self.assertNotIn("rm -rf & calc.exe", " ".join(argv))
         self.assertEqual(argv, ["claude", "-p", "--output-format", "json", "--model", "claude-opus-5-5",
                                 "--effort", "high"])
         self.assertNotIn("--effort", adapter.argv(req(effort=None)))
         with self.assertRaises(ConfigError):
-            ClaudeAdapter(aliases=ALIASES, command=["claude", "-p", "{prompt}"])
+            ClaudeAdapter(aliases=ALIASES, command=["claude", "-p", "{prompt}"], killswitch=OpenKillSwitch())
 
     def test_dsh_passes_selected_model_and_command_without_model_is_rejected(self):
         # SPEC mục 4: model chọn theo độ khó phải tới được CLI, không để CLI dùng model mặc định.
         runner = FakeRunner("{}")
-        DshAdapter(aliases=ALIASES, runner=runner).run(req("deepseek-v4.1-flash-1017", effort=None))
+        DshAdapter(aliases=ALIASES, runner=runner, killswitch=OpenKillSwitch()).run(req("deepseek-v4.1-flash-1017", effort=None))
         argv = runner.calls[0]["argv"]
         self.assertEqual(argv[argv.index("--model") + 1], "deepseek-v4.1-flash-1017")
         for cls, cmd in ((DshAdapter, ["dsh", "--profile", "headless"]),
                          (AntigravityAdapter, ["agy", "-p"]), (ClaudeAdapter, ["claude", "-p"])):
             with self.subTest(cls=cls.__name__), self.assertRaisesRegex(ConfigError, "model"):
-                cls(aliases=ALIASES, command=cmd)
+                cls(aliases=ALIASES, command=cmd, killswitch=OpenKillSwitch())
 
 
 class SubprocessRunnerTest(unittest.TestCase):

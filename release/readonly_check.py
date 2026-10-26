@@ -32,6 +32,20 @@ hành động đề xuất và chỉ ``ok`` khi CẢ HAI lớp đều không th�
   orchestrator không ở trạng thái ``error``.
 - ``log_errors``: số bản ghi audit lỗi (``result`` ∈ ``error``/``rejected``) có ``seq`` >
   ``since_seq`` (seq lúc release) không vượt ``max_new_errors`` (mặc định tạm 0, R16).
+- ``release_tag`` (PR-4b, F2; bắt buộc ở CLI qua ``--expect-tag``): code đang được kiểm PHẢI
+  là checkout của đúng tag release: ``git describe --tags --exact-match --match <tag> HEAD``
+  == ``<tag>`` và không có thay đổi tracked (``git diff --quiet HEAD``) trong ``repo_root`` (thư
+  mục chứa chính module này). Chạy nhầm từ một checkout khác thì không đạt.
+
+Hai chế độ "không ai ghi state_dir trong lúc kiểm" (``quiesce``):
+
+- ``killswitch`` (mặc định, runbook release thủ công): probe ``killswitch_engaged`` ở trên và
+  hàm tự giữ ``release.lock``.
+- ``release_lock`` (PR-4b, batch release tự động; CLI ``--release-lock-held``): batch job đang
+  giữ ``release.lock`` (``purpose`` = ``batch_release``) suốt bước kiểm tra (R10) và giữ
+  ``WriterGuard`` nên không writer nào khác chạy; runner không ghi được kill-switch (chỉ người
+  dùng đổi). Probe ``release_lock_held`` thay cho ``killswitch_engaged``: lock phải có, đúng
+  ``purpose`` và process giữ nó còn sống. Hàm không tự lấy lock trong chế độ này.
 
 Best-effort (R15): audit hook không chặn được code native/ctypes hay process khác cùng OS
 user; lớp 2 chỉ thấy thư mục được theo dõi. Đây là kiểm tra cho phần mềm hợp tác, không
@@ -40,7 +54,8 @@ phải sandbox.
 CLI::
 
     python -m release.readonly_check seq                    # seq audit hiện tại (ghi lại trước release)
-    python -m release.readonly_check run --since-seq N      # báo cáo JSON; exit 0 = đạt, 1 = không đạt
+    python -m release.readonly_check run --since-seq N --expect-tag rel-...   # exit 0 = đạt, 1 = không đạt
+    python -m release.readonly_check run --since-seq N --expect-tag rel-... --release-lock-held   # batch
 """
 
 from __future__ import annotations
@@ -50,7 +65,9 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import shlex
+import subprocess
 import sys
 import threading
 import traceback
@@ -60,6 +77,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 SNAPSHOT_HASH_MAX = 64 * 1024 * 1024
+QUIESCE_KILLSWITCH, QUIESCE_RELEASE_LOCK = "killswitch", "release_lock"
+RELEASE_LOCK_FILE = "release.lock"
+BATCH_LOCK_PURPOSE = "batch_release"
+_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 ERROR_RESULTS = frozenset({"error", "rejected"})
 SMOKE_MODULES = (
     "orchestrator.config", "orchestrator.schemas", "orchestrator.state", "orchestrator.fold",
@@ -68,6 +89,10 @@ SMOKE_MODULES = (
     "adapters.base", "adapters.router",
     "pipeline.common", "pipeline.labeler", "pipeline.ci_status", "pipeline.gate3", "pipeline.fix_loop",
     "pipeline.approvals", "release.manifest", "release.shadow_eval",
+    # PR-4b
+    "release.schedule", "release.gitops", "release.approval_binding", "release.github_write",
+    "release.incidents", "release.batch_config", "release.digest", "release.release_check",
+    "release.auto_revert", "release.batch", "release.runner",
 )
 
 _WRITE_FLAGS = 0
@@ -360,6 +385,50 @@ def probe_killswitch(killswitch) -> ProbeResult:
     })
 
 
+def probe_release_lock(state_dir: Path) -> ProbeResult:
+    """Chế độ ``release_lock``: batch job đang giữ ``release.lock`` suốt bước kiểm tra."""
+    from orchestrator.lock import owner_alive, read_lock
+
+    rec = read_lock(Path(state_dir) / RELEASE_LOCK_FILE)
+    detail = {"purpose": (rec or {}).get("purpose"), "pid": (rec or {}).get("pid"),
+              "why": "batch giữ release.lock + WriterGuard suốt bước kiểm tra nên không ai ghi state_dir"}
+    if not rec:
+        return ProbeResult("release_lock_held", False, {**detail, "problem": "không có release.lock (hoặc hỏng)"})
+    if rec.get("purpose") != BATCH_LOCK_PURPOSE:
+        return ProbeResult("release_lock_held", False, {**detail, "problem": "release.lock không phải của batch"})
+    alive = owner_alive(rec)
+    return ProbeResult("release_lock_held", alive, {**detail, **({} if alive else {"problem": "chủ lock đã chết"})})
+
+
+def _git_ro(repo_root: Path, *args: str) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_EXTERNAL_DIFF"):
+        env.pop(k, None)
+    env["GIT_OPTIONAL_LOCKS"] = "0"  # lệnh đọc không ghi index
+    return subprocess.run(["git", "-c", "core.quotepath=false", "-C", str(repo_root), *args],
+                          capture_output=True, stdin=subprocess.DEVNULL, env=env, check=False, timeout=60)
+
+
+def probe_release_tag(repo_root: Path, expect_tag: str) -> ProbeResult:
+    """F2: code đang chạy là checkout của ĐÚNG tag release (không phải cwd/checkout khác)."""
+    detail: dict = {"repo_root": str(repo_root), "expect_tag": expect_tag}
+    if not isinstance(expect_tag, str) or not _TAG_RE.match(expect_tag) or ".." in expect_tag:
+        return ProbeResult("release_tag", False, {**detail, "problem": "tên tag không hợp lệ"})
+    try:
+        desc = _git_ro(repo_root, "describe", "--tags", "--exact-match", "--match", expect_tag, "HEAD")
+        got = desc.stdout.decode("utf-8", "replace").strip()
+        detail["describe"] = got or desc.stderr.decode("utf-8", "replace").strip()[:300]
+        dirty = _git_ro(repo_root, "diff", "--quiet", "HEAD", "--")
+        detail["tracked_changes"] = dirty.returncode != 0
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        return ProbeResult("release_tag", False, {**detail, "problem": f"{type(exc).__name__}: {exc}"[:300]})
+    ok = desc.returncode == 0 and got == expect_tag and dirty.returncode == 0
+    if not ok:
+        detail["problem"] = ("HEAD không phải tag release" if got != expect_tag
+                             else "checkout có thay đổi tracked so với tag")
+    return ProbeResult("release_tag", ok, detail)
+
+
 def probe_smoke(repo_root: Path, modules: Sequence[str] = SMOKE_MODULES) -> ProbeResult:
     import yaml
     from jsonschema import Draft202012Validator
@@ -436,27 +505,38 @@ def current_audit_seq(state_dir: Path) -> int:
     return max((r["seq"] for r in AuditLog.read(Path(state_dir) / AuditLog.FILE)), default=0)
 
 
-def _run_probes(state_dir: Path, repo_root: Path, killswitch, since_seq: int, max_new_errors: int) -> list[dict]:
+def _run_probes(state_dir: Path, repo_root: Path, killswitch, since_seq: int, max_new_errors: int,
+                expect_tag: str | None = None, quiesce: str = QUIESCE_KILLSWITCH) -> list[dict]:
     probes = [
-        probe_killswitch(killswitch),
+        probe_release_lock(state_dir) if quiesce == QUIESCE_RELEASE_LOCK else probe_killswitch(killswitch),
         probe_smoke(repo_root),
         probe_health(state_dir),
         probe_log_errors(state_dir, since_seq, max_new_errors),
     ]
+    if expect_tag is not None:
+        probes.append(probe_release_tag(repo_root, expect_tag))
     return [asdict(p) for p in probes]
 
 
 def post_release_check(state_dir: Path | str, *, since_seq: int, killswitch, repo_root: Path | str | None = None,
-                       max_new_errors: int = 0, lock: bool = True) -> dict:
-    """Kiểm tra bước 11. Trả báo cáo JSON; ``ok`` chỉ khi mọi probe đạt VÀ không ghi gì."""
+                       max_new_errors: int = 0, lock: bool = True, expect_tag: str | None = None,
+                       quiesce: str = QUIESCE_KILLSWITCH) -> dict:
+    """Kiểm tra bước 11. Trả báo cáo JSON; ``ok`` chỉ khi mọi probe đạt VÀ không ghi gì.
+
+    ``expect_tag`` (F2): thêm probe ``release_tag``. ``quiesce="release_lock"``: batch đang giữ
+    ``release.lock`` nên hàm không tự lấy lock (xem docstring module)."""
     from orchestrator.config import REPO_ROOT
     from orchestrator.lock import LockHeld, PidLock
 
     if isinstance(since_seq, bool) or not isinstance(since_seq, int) or since_seq < 0:
         raise ReadOnlyCheckError(f"since_seq phải là số nguyên >= 0, nhận {since_seq!r}")
+    if quiesce not in (QUIESCE_KILLSWITCH, QUIESCE_RELEASE_LOCK):
+        raise ReadOnlyCheckError(f"quiesce phải là {QUIESCE_KILLSWITCH!r} hoặc {QUIESCE_RELEASE_LOCK!r}")
     state_dir = Path(state_dir)
     repo_root = Path(repo_root) if repo_root else REPO_ROOT
-    release_lock = PidLock(state_dir / "release.lock", meta={"purpose": "readonly_check"}) if lock else None
+    if quiesce == QUIESCE_RELEASE_LOCK:
+        lock = False  # batch là chủ release.lock suốt bước kiểm tra
+    release_lock = PidLock(state_dir / RELEASE_LOCK_FILE, meta={"purpose": "readonly_check"}) if lock else None
     if release_lock is not None:
         try:
             release_lock.acquire()  # ghi lock TRƯỚC ảnh "trước"; không thuộc phần được kiểm
@@ -464,7 +544,8 @@ def post_release_check(state_dir: Path | str, *, since_seq: int, killswitch, rep
             return {"ok": False, "readonly_ok": None, "probes": [], "error": f"release.lock đang bị giữ: {exc}"}
     try:
         rep = verify_readonly(_run_probes, state_dir, repo_root, killswitch, since_seq, max_new_errors,
-                              watch=[state_dir])
+                              expect_tag, quiesce, watch=[state_dir],
+                              allow_command=git_readonly_command if expect_tag is not None else None)
     finally:
         if release_lock is not None:
             release_lock.release()
@@ -490,6 +571,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("seq", help="in seq audit hiện tại (ghi lại TRƯỚC khi đổi tag)")
     run = sub.add_parser("run", help="kiểm tra read-only sau release")
     run.add_argument("--since-seq", type=int, required=True)
+    run.add_argument("--expect-tag", required=True,
+                     help="tag release; checkout chứa module này phải đúng là tag đó (F2)")
+    run.add_argument("--release-lock-held", action="store_true",
+                     help="batch release đang giữ release.lock (PR-4b); thay cho kill-switch bật")
     args = ap.parse_args(argv)
     cfg = load_config()
     if args.cmd == "seq":
@@ -498,7 +583,8 @@ def main(argv: list[str] | None = None) -> int:
     with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
         max_new = int(((yaml.safe_load(f) or {}).get("readonly_check") or {}).get("max_new_errors", 0))
     report = post_release_check(cfg.state_dir, since_seq=args.since_seq, killswitch=KillSwitch.from_config(),
-                                max_new_errors=max_new)
+                                max_new_errors=max_new, expect_tag=args.expect_tag,
+                                quiesce=QUIESCE_RELEASE_LOCK if args.release_lock_held else QUIESCE_KILLSWITCH)
     print(json.dumps(report, ensure_ascii=True, indent=2))  # ASCII: an toàn với stdout cp1252
     return 0 if report["ok"] else 1
 

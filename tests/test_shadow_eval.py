@@ -34,7 +34,7 @@ from release.shadow_eval import (
     label_id_of,
     shadow_progress,
 )
-from tests.killswitch_fixtures import write_killswitch
+from tests.killswitch_fixtures import OpenKillSwitch, write_killswitch
 from tests.test_gate3 import ALIASES, CFG, DIFF, PASS_OUT, FakeReviewer, row, settings
 
 SHADOW_SRC = REPO_ROOT / "release" / "shadow_eval.py"
@@ -67,7 +67,8 @@ def red_label(head=SHA):
 def pass_verdict(lbl, sha=SHA, *, diff=DOCS_DIFF, output=DOCS_PASS) -> dict:
     """Verdict THẬT từ Gate 3 (reviewer giả trả pass có bằng chứng)."""
     adapters = {n: FakeReviewer(n, output=output) for n in ("claude", "dsh", "agy")}
-    g = Gate3(aliases=ALIASES, adapters=adapters, settings=settings(), clock=lambda: NOW)
+    g = Gate3(aliases=ALIASES, adapters=adapters, settings=settings(), clock=lambda: NOW,
+              killswitch=OpenKillSwitch())
     out = g.review(task_id="T-1", attempt=1, sha=sha, label=lbl, diff=diff,
                    ledger_records=[row("claude-opus-5-5")], pr=7)
     assert out.verdict["verdict"] == "pass", out.verdict

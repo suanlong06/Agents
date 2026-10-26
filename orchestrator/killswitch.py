@@ -25,7 +25,9 @@
 Nối vào code PR-1..PR-3: ``Adapter.run/probe``, ``Gate3.review``, ``FixLoop`` (vòng fix,
 PR mới), ``ApprovalMirror.sync`` và ``release.shadow_eval`` nhận ``killswitch`` và gọi
 ``check(action)`` trước khi làm gì; kill-switch bật thì ném ``KillSwitchEngaged`` trước
-mọi hiệu ứng. Runner tự động (PR-4b) PHẢI dựng các thành phần đó với một ``KillSwitch``.
+mọi hiệu ứng. Từ PR-4b (F1) tham số ``killswitch`` là BẮT BUỘC ở mọi thành phần đó (không còn
+mặc định ``None`` = "không kiểm"); runner tự động (``release/runner.py``) dựng MỘT
+``KillSwitch.from_config()`` và truyền tường minh cho digest, batch, revert tự động.
 Fold event và heartbeat không phải "hành động": chúng chỉ ghi lại những gì đã xảy ra,
 nên vẫn chạy để audit/dashboard thấy được trạng thái lúc dừng.
 
